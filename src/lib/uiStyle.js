@@ -5,7 +5,7 @@
 // this table names each editable value, repeats its default (a test checks the
 // two agree), and says which style class and CSS properties it drives. Only
 // the values that differ from their default are stored, as a JSON object in
-// the `ui-style` GSettings key: {"panel-tier-icon.color": "#ff0000"}.
+// the `ui-style` GSettings key: {"panel-chip.font-size": 8}.
 //
 // The extension applies them as inline styles (uiStyle().inline), which beat
 // the stylesheet, and reads the few values it paints, measures or acts on
@@ -59,13 +59,6 @@ const text = (cls, size, def, bold = null) => [
 // The same for a quiet label, whose color follows the shared muted text color.
 const mutedText = (cls, size, bold = null) =>
     text(cls, size, null, bold).map(p => (p.id === `${cls}.color` ? follow('muted.color', p) : p));
-
-// The same values for a class that refines another one: an actor carries both
-// classes, and each value follows `base`'s.
-const refine = (cls, base) => text(base, null, null, 'bold').map(p => {
-    const name = p.id.slice(base.length + 1);
-    return follow(p.id, {...p, id: `${cls}.${name}`, targets: [target(cls, name)]});
-});
 
 const GREY = 'rgba(128, 128, 128, 1.0)';
 
@@ -136,10 +129,10 @@ export const UI_STYLE_GROUPS = [
             'the one here until it is changed there.',
         props: [
             color('muted.color', 'Muted text color', GREY, [
-                ...['panel-tier', 'panel-chip', 'panel-wtag', 'panel-reset', 'subtitle', 'caption', 'extra', 'updated']
+                ...['panel-chip', 'panel-wtag', 'subtitle', 'caption', 'extra', 'updated']
                     .map(cls => target(cls, 'color')),
                 target('error', 'color', 'dim'),
-            ], {subtitle: 'The tier label, the tags and the countdown in the top bar, and the secondary text in the popup.'}),
+            ], {subtitle: 'The source and window tags in the top bar, and the secondary text in the popup.'}),
             color('line.color', 'Divider and separator color', 'rgba(128, 128, 128, 0.5)', [
                 target('panel-divider-line', 'background-color'),
                 target('panel-divider-text', 'color'),
@@ -173,14 +166,8 @@ export const UI_STYLE_GROUPS = [
         page: TOPBAR,
         props: [
             px('panel-icon.icon-size', 'Icon size', 16, target('panel-icon', 'icon-size'),
-                {subtitle: 'The Claude icon and the subscription tier icon.', min: 8}),
-            color('panel-tier-icon.color', 'Subscription tier icon color', '#D97757', target('panel-tier-icon', 'color')),
+                {subtitle: 'The Claude icon.', min: 8}),
         ],
-    },
-    {
-        title: 'Subscription tier label',
-        page: TOPBAR,
-        props: mutedText('panel-tier', 9, 'bold'),
     },
     {
         title: 'Profile tag',
@@ -196,14 +183,8 @@ export const UI_STYLE_GROUPS = [
     {
         title: 'Window tag',
         page: TOPBAR,
-        description: 'The "5h" / "7d" / model name before each gauge, when several are shown.',
+        description: 'The "5h" / "7d" tag before each gauge, when both windows are shown.',
         props: mutedText('panel-wtag', 8, 'bold'),
-    },
-    {
-        title: 'Model tag',
-        page: TOPBAR,
-        description: 'The model name (e.g. "Fable") before a per-model gauge. Each value follows the window tag\'s until it is changed here.',
-        props: refine('panel-wtag-model', 'panel-wtag'),
     },
     {
         title: 'Circle gauge',
@@ -242,21 +223,12 @@ export const UI_STYLE_GROUPS = [
         ],
     },
     {
-        title: 'Time until reset',
-        page: TOPBAR,
-        props: [
-            ...mutedText('panel-reset', 9),
-            bool('panel-reset.bold-numbers', 'Bold numbers', false,
-                {subtitle: 'Shows "1h19m" with the 1 and the 19 in bold, and the h and the m regular.'}),
-        ],
-    },
-    {
         title: 'Dividers',
         page: TOPBAR,
         description: 'A single | draws a thin vertical line, any other text is shown as typed, and blank shows ' +
             'no divider. The color applies to both kinds; a line has a width and a height, text has a font size.',
         settings: [
-            {key: 'panel-lead-divider', title: 'Lead divider (after the icon and tier, and between profiles)'},
+            {key: 'panel-lead-divider', title: 'Lead divider (after the icon and source tag, and between sources)'},
             {key: 'panel-divider', title: 'Window divider (between usage windows)'},
         ],
         props: [
@@ -387,8 +359,7 @@ const BY_ID = new Map(UI_STYLE_PROPS.map(p => [p.id, p]));
 
 // What a value is while it is not overridden itself: its default, or for one
 // that `inherits`, whatever the value it follows currently is. That one may
-// follow another in turn (the model tag's color follows the window tag's,
-// which follows the shared muted text color).
+// follow another in turn (a tag's color follows the shared muted text color).
 export function defaultValue(prop, overrides = {}) {
     if (!prop.inherits)
         return prop.def;
@@ -397,9 +368,7 @@ export function defaultValue(prop, overrides = {}) {
 }
 
 // Pango markup for a compact duration with its numbers bold and the rest
-// regular: in "1h19m" the 1 and the 19 are bold, the h and the m are not. Both
-// weights are spelled out, because the label's own weight (the stock panel's
-// is bold) would otherwise carry over to the units.
+// regular. Escaping user-facing text keeps the result safe to hand to Pango.
 export function boldNumbersMarkup(text) {
     const escaped = String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     if (!escaped)

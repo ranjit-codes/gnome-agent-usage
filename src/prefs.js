@@ -96,15 +96,13 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
         // ---- which elements appear in the panel ----
         const elements = new Adw.PreferencesGroup({
             title: 'Panel elements',
-            description: 'Choose what to show in the top bar.',
+            description: 'Choose what to show in the top bar and how usage percentages read.',
         });
         page.add(elements);
 
         const toggles = [
             ['show-icon', 'Claude icon'],
             ['show-percentage', 'Usage percentage'],
-            ['show-tier', 'Subscription tier label'],
-            ['show-tier-icon', 'Subscription tier icon'],
         ];
         for (const [key, title] of toggles) {
             const row = new Adw.SwitchRow({title});
@@ -112,21 +110,30 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
             settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
         }
 
-        // Only has any effect with more than one profile configured.
+        const percentModes = new Gtk.StringList();
+        percentModes.append('Used');
+        percentModes.append('Left');
+        const percentModeKeys = ['used', 'left'];
+        const percentModeRow = new Adw.ComboRow({
+            title: 'Percentage shows',
+            subtitle: 'Choose whether the number shows usage or remaining capacity in the panel and popup.',
+            model: percentModes,
+        });
+        percentModeRow.selected = Math.max(0, percentModeKeys.indexOf(settings.get_string('percentage-display')));
+        percentModeRow.connect('notify::selected', () => {
+            settings.set_string('percentage-display', percentModeKeys[percentModeRow.selected]);
+        });
+        settings.connect('changed::percentage-display', () => {
+            percentModeRow.selected = Math.max(0, percentModeKeys.indexOf(settings.get_string('percentage-display')));
+        });
+        elements.add(percentModeRow);
+
         const chipRow = new Adw.SwitchRow({
             title: 'Profile tag',
-            subtitle: 'Show a short tag (e.g. "DW") before each profile\'s gauge, when you have more than one profile.',
+            subtitle: 'Show a short tag (e.g. "CL" or "CO") before each source\'s gauge when more than one is shown.',
         });
         elements.add(chipRow);
         settings.bind('show-profile-chip', chipRow, 'active', Gio.SettingsBindFlags.DEFAULT);
-
-        // Time-until-reset for each window chosen under "Panel reflects" below.
-        const resetRow = new Adw.SwitchRow({
-            title: 'Time until reset',
-            subtitle: 'Show the time left before each window shown in the panel resets (once for the 7-day windows, which reset together).',
-        });
-        elements.add(resetRow);
-        settings.bind('show-reset', resetRow, 'active', Gio.SettingsBindFlags.DEFAULT);
 
         const gauges = new Gtk.StringList();
         gauges.append('Circle');
@@ -208,27 +215,21 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
         this._addAboutGroup(page);
     }
 
-    // Adds the "Panel reflects" group: one switch per selector in the
-    // panel-windows list (any combination; the panel shows one gauge per
-    // matched window, tagged when there is more than one). The switches and
+    // Adds the "Panel reflects" group: one switch for each supported usage
+    // window. The switches and
     // the setting are kept in sync both ways, like the combo rows above; GTK
     // does not re-notify an unchanged `active`, so the round trip settles.
     _addPanelWindowsGroup(page, settings) {
         const group = new Adw.PreferencesGroup({
             title: 'Panel reflects',
-            description: 'Which usage windows the top bar shows. Turn on more than one ' +
-                'to show them side by side, each with a short tag (5h, 7d, model name). ' +
-                'With none of them on, the panel falls back to the 5-hour window; to show ' +
-                'no gauge at all, set the gauge to "None" and turn off the usage percentage.',
+            description: 'Choose whether the Claude and Codex panels show the 5-hour window, ' +
+                'the 7-day window, or both side by side.',
         });
         page.add(group);
 
         const rows = [
             ['five-hour', '5-hour window', ''],
             ['seven-day', '7-day window', 'All models.'],
-            ['scoped', 'Per-model 7-day windows', 'Every model-specific limit, e.g. Fable.'],
-            ['max', 'Most constrained', 'Whichever window has the highest usage.'],
-            ['worst', 'Worst active limit', 'Highest severity among the active limits; surfaces a maxed-out per-model window.'],
         ];
         const switches = new Map();
         const selected = () => new Set(settings.get_strv('panel-windows'));
@@ -507,7 +508,7 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
         const version = this.metadata['version-name'] ?? String(this.metadata.version ?? '');
         if (version) {
             footer.add(new Gtk.Label({
-                label: `· Claude Code Usage Monitor v${version} ·`,
+                label: `· Claude and Codex Usage Monitor v${version} ·`,
                 css_classes: ['dim-label'],
             }));
         }

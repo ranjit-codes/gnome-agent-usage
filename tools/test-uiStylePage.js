@@ -63,23 +63,17 @@ test('one row per value of the tab, all at their defaults', () => {
         assert(!reset.visible, 'no reset button at the default');
     assert(!resetAll.visible, 'no "Reset all" at the defaults');
     assert(rows.get('panel.spacing').control.value === 5, 'spacing shows 5');
-    assert(rows.get('panel-tier-icon.color').control.rgba.equal(rgba('#D97757')), 'tier icon is orange');
-    assert(rows.get('panel-tier.font-weight').control.selected === 1, 'tier label is bold');
     assert(settings.get_string(UI_STYLE_KEY) === '{}', 'building the page writes nothing');
 });
 
 test('changing a control stores the value and shows its reset button', () => {
     rows.get('panel.spacing').control.set_value(9);
-    rows.get('panel-tier-icon.color').control.rgba = rgba('#00ff00');
-    rows.get('panel-tier.font-weight').control.set_selected(0);
-    rows.get('panel-tier.font-size').control.set_value(10.5);
+    rows.get('panel-chip.font-size').control.set_value(10.5);
     settle();
     const s = stored();
     assert(s['panel.spacing'] === 9, 'spacing stored');
-    assert(s['panel-tier-icon.color'] === '#00ff00', `color stored: ${s['panel-tier-icon.color']}`);
-    assert(s['panel-tier.font-weight'] === 'normal', 'weight stored');
-    assert(s['panel-tier.font-size'] === 10.5, 'font size stored');
-    assert(Object.keys(s).length === 4, 'nothing else stored');
+    assert(s['panel-chip.font-size'] === 10.5, 'source tag size stored');
+    assert(Object.keys(s).length === 2, 'nothing else stored');
     assert(rows.get('panel.spacing').reset.visible, 'reset shown for spacing');
     assert(!rows.get('panel.padding-h').reset.visible, 'not for an untouched row');
     assert(resetAll.visible, '"Reset all" shown');
@@ -96,10 +90,10 @@ test('a row\'s reset button restores the default and hides itself', () => {
 });
 
 test('setting a value back to its default by hand counts as unchanged', () => {
-    const {control, reset} = rows.get('panel-tier.font-weight');
+    const {control, reset} = rows.get('panel-chip.font-weight');
     control.set_selected(1);
     settle();
-    assert(!('panel-tier.font-weight' in stored()), 'override removed');
+    assert(!('panel-chip.font-weight' in stored()), 'override removed');
     assert(!reset.visible, 'reset hidden');
 });
 
@@ -109,22 +103,8 @@ test('an external change (dconf, another window) reaches the rows', () => {
     assert(rows.get('ring.size').control.value === 24, 'ring size shown');
     assert(rows.get('ring.size').reset.visible, 'ring size reset shown');
     assert(rows.get('panel-pct.color').control.rgba.equal(rgba('#ff0000')), 'inherited color shown once set');
-    assert(!rows.get('panel-tier-icon.color').reset.visible, 'dropped override reset hidden');
-    assert(rows.get('panel-tier-icon.color').control.rgba.equal(rgba('#D97757')), 'and back to orange');
+    assert(!rows.has('panel-tier-icon.color'), 'removed style controls are not exposed');
     assert(Object.keys(stored()).length === 2, 'showing values wrote nothing back');
-});
-
-test('a switch stores true, and back to off counts as unchanged', () => {
-    const {control, reset} = rows.get('panel-reset.bold-numbers');
-    assert(control instanceof Gtk.Switch && !control.active, 'off by default');
-    control.set_active(true);
-    settle();
-    assert(stored()['panel-reset.bold-numbers'] === true, 'stored');
-    assert(reset.visible, 'reset shown');
-    control.set_active(false);
-    settle();
-    assert(!('panel-reset.bold-numbers' in stored()), 'override removed');
-    assert(!reset.visible, 'reset hidden');
 });
 
 test('the percentage: a position, a switch for its sign, and the panel\'s font size until one is set', () => {
@@ -152,24 +132,6 @@ test('the percentage: a position, a switch for its sign, and the panel\'s font s
     assert(position.control.selected === 0 && sign.control.active && size.control.value === 11, 'controls back');
 });
 
-test('a model tag value shows the window tag\'s until it has its own', () => {
-    const model = rows.get('panel-wtag-model.font-size');
-    assert(model.control.value === 8, 'shows the window tag default');
-    rows.get('panel-wtag.font-size').control.set_value(10);
-    settle();
-    assert(model.control.value === 10, 'follows the window tag');
-    assert(!model.reset.visible && !('panel-wtag-model.font-size' in stored()), 'without a value of its own');
-    model.control.set_value(8);
-    settle();
-    assert(stored()['panel-wtag-model.font-size'] === 8, 'its own value is kept, even the default size');
-    assert(model.reset.visible, 'reset shown');
-    model.reset.emit('clicked');
-    settle();
-    assert(model.control.value === 10, 'reset: follows the window tag again');
-    rows.get('panel-wtag.font-size').reset.emit('clicked');
-    settle();
-});
-
 test('the divider texts are edited, reset and counted here', () => {
     assert(textRows.size === 2, 'two divider text rows');
     const {control, reset} = textRows.get('panel-divider');
@@ -193,38 +155,35 @@ test('a shared value is on the "Shared UI" tab only, and the rows that follow it
     const muted = shared.rows.get('muted.color');
     assert(muted && !rows.has('muted.color') && !popup.rows.has('muted.color'), 'on the shared tab only');
     assert(shared.rows.has('usage.warn') && !rows.has('usage.warn') && !popup.rows.has('usage.warn'), 'the usage colors too');
-    const tier = rows.get('panel-tier.color');
+    const chip = rows.get('panel-chip.color');
     const secondary = popup.rows.get('secondary.color');
     const grey = rgba('rgba(128, 128, 128, 1.0)');
-    assert(tier.control.rgba.equal(grey) && secondary.control.rgba.equal(grey), 'both show the shared default');
-    assert(tier.row.subtitle.includes('"Muted text color" on the "Shared UI" tab'), `says what it follows: ${tier.row.subtitle}`);
-    assert(tier.reset.tooltip_text.includes('on the "Shared UI" tab'), tier.reset.tooltip_text);
-    assert(rows.get('panel-wtag-model.color').reset.tooltip_text.includes('under "Window tag"'), 'within a tab: the group');
-    assert(rows.get('panel-wtag-model.color').row.subtitle === '', 'and no note, the group says it');
+    assert(chip.control.rgba.equal(grey) && secondary.control.rgba.equal(grey), 'both show the shared default');
+    assert(chip.row.subtitle.includes('"Muted text color" on the "Shared UI" tab'), `says what it follows: ${chip.row.subtitle}`);
+    assert(chip.reset.tooltip_text.includes('on the "Shared UI" tab'), chip.reset.tooltip_text);
 
     const popupBefore = popup.resetAll.visible;
     muted.control.rgba = rgba('#123456');
     settle();
     assert(stored()['muted.color'] === '#123456', 'stored once');
-    assert(tier.control.rgba.equal(rgba('#123456')) && secondary.control.rgba.equal(rgba('#123456')), 'followed on both tabs');
-    assert(rows.get('panel-wtag-model.color').control.rgba.equal(rgba('#123456')), 'and through the window tag');
-    assert(!tier.reset.visible && !secondary.reset.visible, 'without values of their own');
+    assert(chip.control.rgba.equal(rgba('#123456')) && secondary.control.rgba.equal(rgba('#123456')), 'followed on both tabs');
+    assert(!chip.reset.visible && !secondary.reset.visible, 'without values of their own');
     assert(shared.resetAll.visible && popup.resetAll.visible === popupBefore, 'it counts on the shared tab only');
 
-    tier.control.rgba = rgba('#ff0000');
+    chip.control.rgba = rgba('#ff0000');
     settle();
-    assert(stored()['panel-tier.color'] === '#ff0000' && tier.reset.visible, 'a value of its own');
+    assert(stored()['panel-chip.color'] === '#ff0000' && chip.reset.visible, 'a value of its own');
     assert(secondary.control.rgba.equal(rgba('#123456')), 'the others still follow');
-    tier.reset.emit('clicked');
+    chip.reset.emit('clicked');
     settle();
-    assert(tier.control.rgba.equal(rgba('#123456')) && !tier.reset.visible, 'reset: follows the shared value again');
+    assert(chip.control.rgba.equal(rgba('#123456')) && !chip.reset.visible, 'reset: follows the shared value again');
 
     const dialog = shared.buildResetAllDialog();
     assert(dialog.heading.includes('Shared UI') && dialog.body.includes('one value'), `${dialog.heading} ${dialog.body}`);
     dialog.emit('response', 'reset');
     settle();
     assert(!('muted.color' in stored()) && !shared.resetAll.visible, 'shared tab back at its defaults');
-    assert(tier.control.rgba.equal(grey) && secondary.control.rgba.equal(grey), 'and so are the rows that follow');
+    assert(chip.control.rgba.equal(grey) && secondary.control.rgba.equal(grey), 'and so are the rows that follow');
 });
 
 test('"Reset all" only resets its own tab', () => {

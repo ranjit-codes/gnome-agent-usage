@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 import {
-    normalizeWindows, normalizeSpend, apiSeverityLevel, limitLabel, limitKey,
+    normalizeWindows, normalizeCodexUsage, normalizeSpend, apiSeverityLevel, limitLabel, limitKey,
     selectPanelWindows, windowTag, migratePanelWindows, groupPanelWindows, tierIconName,
     PANEL_SELECTORS, TIER_ICONS,
 } from '../src/lib/usageModel.js';
@@ -92,6 +92,26 @@ test('empty limits[] falls back rather than rendering nothing', () => {
 test('empty/garbage usage yields no windows without throwing', () => {
     assert.deepEqual(normalizeWindows(null), []);
     assert.deepEqual(normalizeWindows({}), []);
+});
+
+test('normalizeCodexUsage maps the primary and secondary windows by duration', () => {
+    const codex = normalizeCodexUsage({
+        plan_type: 'pro',
+        rate_limit: {
+            // Plans can report the weekly window as primary, so duration—not
+            // slot name—determines which panel selector it matches.
+            primary_window: {used_percent: 62, limit_window_seconds: 604800, reset_at: 1780000000},
+            secondary_window: {used_percent: 17, limit_window_seconds: 18000, reset_at: 1780000100},
+        },
+    });
+    assert.equal(codex.plan_type, 'pro');
+    const windows = normalizeWindows(codex);
+    assert.deepEqual(windows.map(w => w.role), ['session', 'weekly']);
+    assert.deepEqual(windows.map(w => w.utilization), [17, 62]);
+    assert.deepEqual(windows.map(w => w.resetsAt), [
+        new Date(1780000100 * 1000).toISOString(),
+        new Date(1780000000 * 1000).toISOString(),
+    ]);
 });
 
 // --- labels & keys for unknown future models ---

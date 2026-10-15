@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
     UI_PAGES, UI_STYLE_GROUPS, UI_STYLE_PROPS, UI_STYLE_KEY, UI_TEXT_SETTINGS, pageGroups, propGroup,
-    parseColor, formatColor, hoverShade, sanitizeValue, cleanOverrides, defaultValue, boldNumbersMarkup,
+    parseColor, formatColor, hoverShade, sanitizeValue, cleanOverrides, boldNumbersMarkup,
     loadOverrides, setOverride, textSettingChanged, changedCount, resetPage, uiStyle,
 } from '../src/lib/uiStyle.js';
 
@@ -201,13 +201,11 @@ test('sanitizeValue: type, range, rounding', () => {
     assert.equal(sanitizeValue(spacing, -1), undefined);
     assert.equal(sanitizeValue(spacing, 999), undefined);
     assert.equal(sanitizeValue(spacing, '7'), undefined);
-    assert.equal(sanitizeValue(prop('panel-tier.font-size'), 9.3), 9.5);
-    assert.equal(sanitizeValue(prop('panel-tier.font-weight'), 'normal'), 'normal');
-    assert.equal(sanitizeValue(prop('panel-tier.font-weight'), 'heavy'), undefined);
-    assert.equal(sanitizeValue(prop('panel-tier.color'), '#abc'), '#abc');
-    assert.equal(sanitizeValue(prop('panel-tier.color'), 'red; margin: 0'), undefined);
-    assert.equal(sanitizeValue(prop('panel-reset.bold-numbers'), true), true);
-    assert.equal(sanitizeValue(prop('panel-reset.bold-numbers'), 'yes'), undefined);
+    assert.equal(sanitizeValue(prop('panel-chip.font-size'), 8.3), 8.5);
+    assert.equal(sanitizeValue(prop('panel-chip.font-weight'), 'normal'), 'normal');
+    assert.equal(sanitizeValue(prop('panel-chip.font-weight'), 'heavy'), undefined);
+    assert.equal(sanitizeValue(prop('panel-chip.color'), '#abc'), '#abc');
+    assert.equal(sanitizeValue(prop('panel-chip.color'), 'red; margin: 0'), undefined);
     assert.equal(sanitizeValue(undefined, 1), undefined);
 });
 
@@ -215,13 +213,13 @@ test('cleanOverrides drops unknown ids, bad values and restated defaults', () =>
     assert.deepEqual(cleanOverrides({
         'panel.spacing': 9,
         'panel.padding-h': 4,                  // the default
-        'panel-tier-icon.color': '#d97757',    // the default, other case
-        'panel-tier.color': '#ABCDEF',
+        'panel-tier-icon.color': '#d97757',    // removed style id
+        'panel-chip.color': '#ABCDEF',
         'panel-pct.color': '#ffffff',          // inherited by default: kept
         'nope.nothing': 1,
         'ring.stroke': 'thick',
         'ring.ok': '#00ff00',                  // an id from before the colors were shared
-    }), {'panel.spacing': 9, 'panel-tier.color': '#ABCDEF', 'panel-pct.color': '#ffffff'});
+    }), {'panel.spacing': 9, 'panel-chip.color': '#ABCDEF', 'panel-pct.color': '#ffffff'});
     for (const junk of [null, [], 'x', 3])
         assert.deepEqual(cleanOverrides(junk), {});
 });
@@ -301,22 +299,22 @@ test('uiStyle: nothing changed means no inline style anywhere', () => {
 });
 
 test('uiStyle.inline writes each CSS property of a changed value, with units', () => {
-    const style = uiStyle({'panel.padding-h': 9, 'panel.spacing': 2, 'panel-tier.font-size': 10.5});
+    const style = uiStyle({'panel.padding-h': 9, 'panel.spacing': 2, 'panel-chip.font-size': 10.5});
     assert.equal(style.inline('panel'), 'spacing: 2px; padding-left: 9px; padding-right: 9px;');
     assert.equal(style.inline('panel-block'), 'spacing: 2px;');
     assert.equal(style.inline('panel-gauge'), 'spacing: 2px;');
     assert.equal(style.inline('panel-gauges'), null);
-    assert.equal(style.inline('panel-tier'), 'font-size: 10.5pt;');
-    assert.equal(style.inline('panel-chip'), null);
+    assert.equal(style.inline('panel-chip'), 'font-size: 10.5pt;');
+    assert.equal(style.inline('panel-wtag'), null);
     assert.equal(style.changed, true);
 });
 
 test('uiStyle.inline: one value can drive several classes, and several classes one actor', () => {
-    const style = uiStyle({'panel-bar.height': 6, 'panel-icon.icon-size': 20, 'panel-tier-icon.color': '#00ff00'});
+    const style = uiStyle({'panel-bar.height': 6, 'panel-icon.icon-size': 20, 'panel-chip.font-size': 9});
     assert.equal(style.inline('panel-bar'), 'height: 6px;');
     assert.equal(style.inline('panel-bar-fill', 'ok'), 'height: 6px;');
     assert.equal(style.inline('panel-icon'), 'icon-size: 20px;');
-    assert.equal(style.inline(['panel-icon', 'panel-tier-icon']), 'icon-size: 20px; color: #00ff00;');
+    assert.equal(style.inline(['panel-icon', 'panel-chip']), 'icon-size: 20px; font-size: 9pt;');
     assert.equal(style.inline([]), null);
 });
 
@@ -381,7 +379,7 @@ test('the divider color is one value for both kinds of divider', () => {
 
 test('the values of the two tabs follow the shared ones until they are changed', () => {
     const followers = {
-        'muted.color': ['panel-tier.color', 'panel-chip.color', 'panel-wtag.color', 'panel-reset.color', 'secondary.color'],
+        'muted.color': ['panel-chip.color', 'panel-wtag.color', 'secondary.color'],
         'line.color': ['panel-divider.color', 'separator.color'],
         'bar.border-radius': ['panel-bar.border-radius', 'track.border-radius'],
         'pct.font-weight': ['panel-pct.font-weight', 'meter-pct.font-weight'],
@@ -396,21 +394,19 @@ test('the values of the two tabs follow the shared ones until they are changed',
     }
 
     // The shared value alone reaches every class, and the values that follow
-    // it read as it does: the model tag's through the window tag's.
+    // it read as it does.
     const shared = uiStyle({'muted.color': '#777777'});
-    for (const cls of ['panel-tier', 'panel-chip', 'panel-wtag', 'panel-reset', 'subtitle', 'caption', 'updated'])
+    for (const cls of ['panel-chip', 'panel-wtag', 'subtitle', 'caption', 'updated'])
         assert.equal(shared.inline(cls), 'color: #777777;');
     assert.equal(shared.inline('error'), null);
     assert.equal(shared.inline('error', 'dim'), 'color: #777777;');
-    assert.equal(shared.value('panel-tier.color'), '#777777');
-    assert.equal(shared.value('panel-wtag-model.color'), '#777777');
-    assert.equal(uiStyle({'muted.color': '#777777', 'panel-wtag.color': '#111111'}).value('panel-wtag-model.color'), '#111111');
+    assert.equal(shared.value('panel-chip.color'), '#777777');
 
     // A value of its own is written after the shared one, so it wins, there only.
-    const own = uiStyle({'muted.color': '#777777', 'panel-tier.color': '#ff0000'});
-    assert.equal(own.inline('panel-tier'), 'color: #777777; color: #ff0000;');
-    assert.equal(own.inline('panel-chip'), 'color: #777777;');
-    assert.equal(own.value('panel-tier.color'), '#ff0000');
+    const own = uiStyle({'muted.color': '#777777', 'panel-chip.color': '#ff0000'});
+    assert.equal(own.inline('panel-chip'), 'color: #777777; color: #ff0000;');
+    assert.equal(own.inline('panel-wtag'), 'color: #777777;');
+    assert.equal(own.value('panel-chip.color'), '#ff0000');
 
     const line = uiStyle({'line.color': '#00ff00', 'separator.color': '#0000ff'});
     assert.equal(line.inline('panel-divider-line'), 'background-color: #00ff00;');
@@ -442,27 +438,6 @@ test('the percentage: next to the gauge or on it, its sign, a font size of its o
     assert.deepEqual(cleanOverrides({'panel-pct.font-size': 11, 'panel-pct.sign': true}), {'panel-pct.font-size': 11});
 });
 
-test('the model tag follows the window tag until it has a value of its own', () => {
-    const size = prop('panel-wtag-model.font-size');
-    assert.equal(defaultValue(size), 8);
-    assert.equal(defaultValue(size, {'panel-wtag.font-size': 10}), 10);
-    assert.equal(defaultValue(prop('panel.spacing'), {'panel.spacing': 9}), 5);
-
-    const model = ['panel-wtag', 'panel-wtag-model'];
-    const follows = uiStyle({'panel-wtag.font-size': 10, 'panel-wtag.color': '#ffa348'});
-    assert.equal(follows.inline(model), follows.inline('panel-wtag'));
-    assert.equal(follows.value('panel-wtag-model.font-size'), 10);
-    assert.equal(follows.value('panel-wtag-model.font-weight'), 'bold');
-
-    // Its own value is written after the window tag's, so it wins; one equal
-    // to the window tag's default is still its own, and is kept.
-    const own = uiStyle({'panel-wtag.font-size': 10, 'panel-wtag.color': '#ffa348',
-        'panel-wtag-model.color': '#00ff00', 'panel-wtag-model.font-size': 8});
-    assert.equal(own.inline('panel-wtag'), 'font-size: 10pt; color: #ffa348;');
-    assert.equal(own.inline(model), 'font-size: 10pt; color: #ffa348; font-size: 8pt; color: #00ff00;');
-    assert.equal(own.value('panel-wtag-model.font-size'), 8);
-});
-
 test('boldNumbersMarkup: numbers bold, units regular, text escaped', () => {
     const b = n => `<span weight="bold">${n}</span>`;
     assert.equal(boldNumbersMarkup('1h19m'), `<span weight="normal">${b(1)}h${b(19)}m</span>`);
@@ -470,8 +445,6 @@ test('boldNumbersMarkup: numbers bold, units regular, text escaped', () => {
     assert.equal(boldNumbersMarkup('now'), '<span weight="normal">now</span>');
     assert.equal(boldNumbersMarkup('<1m & co'), `<span weight="normal">&lt;${b(1)}m &amp; co</span>`);
     assert.equal(boldNumbersMarkup(''), '');
-    assert.equal(uiStyle().value('panel-reset.bold-numbers'), false);
-    assert.equal(uiStyle({'panel-reset.bold-numbers': true}).value('panel-reset.bold-numbers'), true);
 });
 
 test('the divider texts count as changed, and reset, with everything else', () => {

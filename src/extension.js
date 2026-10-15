@@ -15,12 +15,13 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {UsageClient, UsageError, SignedOutError, defaultConfigDir} from './lib/usageClient.js';
+import {CodexUsageClient, defaultCodexHome} from './lib/codexUsageClient.js';
 import {loadProfiles, ensureProfiles} from './lib/profiles.js';
 import {
-    normalizeWindows, normalizeSpend, selectPanelWindows, groupPanelWindows, windowTag, tierIconName,
+    normalizeWindows, normalizeCodexUsage, normalizeSpend, selectPanelWindows, groupPanelWindows, windowTag,
     migratePanelWindows,
 } from './lib/usageModel.js';
-import {uiStyle, loadOverrides, boldNumbersMarkup, hoverShade, formatColor} from './lib/uiStyle.js';
+import {uiStyle, loadOverrides, hoverShade, formatColor} from './lib/uiStyle.js';
 
 const USAGE_SETTINGS_URL = 'https://claude.ai/settings/usage';
 
@@ -217,19 +218,6 @@ function relativeReset(iso) {
     return `resets in ${days}d ${hrs % 24}h`;
 }
 
-// Compact "time until reset" for the panel: magnitude only, no "resets in"
-// prefix, no separator between units ("4h21m"). Empty when the timestamp is
-// missing or unparseable so the label collapses instead of showing junk.
-function compactReset(iso) {
-    const target = Date.parse(iso);
-    if (Number.isNaN(target))
-        return '';
-    const diff = target - Date.now();
-    if (diff <= 0)
-        return 'now';
-    return humanDuration(diff / 1000, '');
-}
-
 // Let a fixed-width popup label wrap onto extra lines instead of running off
 // the edge. Pango only wraps when the text actually exceeds the width, so short
 // text stays on one line. Returns the label for chaining.
@@ -285,8 +273,8 @@ class Meter {
 
     // The bar width tracks actual utilization; level (defaults to the util's
     // own level) drives the color, so projection can tint without resizing.
-    setValue(util, caption, level = utilLevel(util)) {
-        this._pct.text = `${Math.round(util)}%`;
+    setValue(util, caption, level = utilLevel(util), displayPercent = util) {
+        this._pct.text = `${Math.round(displayPercent)}%`;
         this._fraction = Math.max(0, Math.min(100, util)) / 100;
         this._resizeFill();
         this._level = level;
@@ -485,7 +473,7 @@ function applyInline(actor, style, cls, state = null) {
 }
 
 // A divider in the panel, from one of the two divider settings: the lead
-// divider (panel-lead-divider: after the Claude icon / tier, and between
+// divider (panel-lead-divider: after the Claude icon / source tag, and between
 // profiles) or the window divider (panel-divider: between groups of gauges).
 // Blank or whitespace-only text shows nothing, so the box spacing alone makes
 // the gap; exactly "|" draws a crisp 1px line rather than the font's glyph;
@@ -532,7 +520,7 @@ class PanelDivider {
 // percentage can be drawn on top of the one shown instead of next to it (the
 // "Usage percentage" position under "Top-Bar UI"). A ProfileView keeps one per
 // window the panel-windows setting selects, and places each in a PanelGroup
-// (which carries the divider and the reset countdown). Mirrors Meter/PanelBar:
+// (which carries the window divider). Mirrors Meter/PanelBar:
 // owns its actors and tears them down explicitly.
 class PanelGauge {
     constructor() {
@@ -554,6 +542,7 @@ class PanelGauge {
         this.root.add_child(this._stack);
         this.root.add_child(this._pct);
         this._util = null;
+        this._displayPercent = null;
         this._level = null;
         this._gauge = 'ring';
         this._over = false;
@@ -561,20 +550,18 @@ class PanelGauge {
         this._style = DEFAULT_STYLE;
     }
 
-    // The tag only earns its width when more than one gauge is on screen, so
-    // the caller says whether to show it. A model name ("Fable") is a tag
-    // with a class of its own on top, so it can be styled apart from the
-    // "5h" / "7d" tags.
-    setTag(text, visible, model = false) {
+    // The tag only earns its width when both usage windows are shown.
+    setTag(text, visible) {
         this._tag.text = text ?? '';
         this._tag.visible = !!visible && this._tag.text !== '';
-        this._tagClasses = model ? ['panel-wtag', 'panel-wtag-model'] : ['panel-wtag'];
+        this._tagClasses = ['panel-wtag'];
         setIfChanged(this._tag, 'style_class', this._tagClasses.map(cls => `cu-${cls}`).join(' '));
         applyInline(this._tag, this._style, this._tagClasses);
     }
 
-    setValue(util, level) {
+    setValue(util, level, displayPercent = util) {
         this._util = util;
+        this._displayPercent = displayPercent;
         this._syncPctText();
         this._setLevel(level);
         this._ring.setValue(util, level);
@@ -583,6 +570,7 @@ class PanelGauge {
 
     setUnknown() {
         this._util = null;
+        this._displayPercent = null;
         setIfChanged(this._pct, 'text', '—');
         this._setLevel(null);
         this._ring.setUnknown();
@@ -594,6 +582,7 @@ class PanelGauge {
     // rather than going through setUnknown's '—' first.
     setError() {
         this._util = null;
+        this._displayPercent = null;
         setIfChanged(this._pct, 'text', '!');
         this._setLevel('warn');
         this._ring.setUnknown();
@@ -604,10 +593,10 @@ class PanelGauge {
     // it fits inside the ring). Only while there is a value: '—', '!' and the
     // placeholder's '…' stay as they are.
     _syncPctText() {
-        if (this._util === null)
+        if (this._displayPercent === null)
             return;
         const sign = this._style.value('panel-pct.sign') ? '%' : '';
-        setIfChanged(this._pct, 'text', `${Math.round(this._util)}${sign}`);
+        setIfChanged(this._pct, 'text', `${Math.round(this._displayPercent)}${sign}`);
     }
 
     // The percentage's level class, and the inline style that goes with it.
@@ -672,29 +661,19 @@ class PanelGauge {
     }
 }
 
-// A run of panel gauges that reset together (see groupPanelWindows): the
-// window divider, the gauges, then one reset countdown for all of them. Most
-// groups hold a single gauge; the 7-day window and the per-model 7-day windows
-// share one. The gauges belong to the ProfileView (they outlive a regrouping),
-// so the group only parents them and hands them back before it is destroyed.
+// A run of panel gauges that share a divider group. The gauges belong to the
+// ProfileView (they outlive a regrouping), so this group only parents them and
+// hands them back before it is destroyed.
 class PanelGroup {
     constructor() {
         this.root = new St.BoxLayout({style_class: 'cu-panel-group'});
         this._divider = new PanelDivider();
-        this._reset = new St.Label({text: '', style_class: 'cu-panel-reset', y_align: Clutter.ActorAlign.CENTER});
-        this._reset.visible = false;
         this.root.add_child(this._divider.root);
-        this.root.add_child(this._reset);
         this._gauges = [];
-        this._resetsAt = null;
-        this._showReset = false;
-        this._boldNumbers = false;
-        // What the countdown label was last given (see _syncResetText).
-        this._shown = null;
     }
 
-    // Parents exactly these gauges, in order, between the divider and the
-    // countdown. A gauge is only reparented when it sits somewhere else.
+    // Parents exactly these gauges, in order, after the divider. A gauge is
+    // only reparented when it sits somewhere else.
     setGauges(gauges) {
         for (const gauge of this._gauges) {
             if (!gauges.includes(gauge) && gauge.root?.get_parent() === this.root)
@@ -715,69 +694,32 @@ class PanelGroup {
         this._divider.set(text, wanted);
     }
 
-    // The group's reset time (null: no countdown). The text is recomputed on
-    // every call, which is how the countdown ticks between polls.
-    setReset(iso) {
-        this._resetsAt = iso ?? null;
-        this._syncResetText();
-        this._syncReset();
-    }
-
-    // The countdown, with its numbers in bold and its units regular when that
-    // UI setting is on. Markup and plain text go in through different calls
-    // (setting the text also switches markup off again), so what was last
-    // given is remembered here rather than read back from the label.
-    _syncResetText() {
-        const text = this._resetsAt ? compactReset(this._resetsAt) : '';
-        const shown = `${this._boldNumbers}|${text}`;
-        if (shown === this._shown)
-            return;
-        this._shown = shown;
-        if (this._boldNumbers)
-            this._reset.clutter_text.set_markup(boldNumbersMarkup(text));
-        else
-            this._reset.text = text;
-    }
-
-    applyVisibility(settings) {
-        this._showReset = settings.get_boolean('show-reset');
-        this._syncReset();
-    }
-
     applyStyle(style) {
         applyInline(this.root, style, 'panel-group');
-        applyInline(this._reset, style, 'panel-reset');
         this._divider.applyStyle(style);
-        this._boldNumbers = style.value('panel-reset.bold-numbers');
-        this._syncResetText();
-    }
-
-    // An empty countdown still takes its box spacing, so hide it.
-    _syncReset() {
-        setIfChanged(this._reset, 'visible', this._showReset && this._reset.text !== '');
     }
 
     destroy() {
         this.setGauges([]);
         this._divider?.destroy();
-        this._reset?.destroy();
         this.root?.destroy();
         this._divider = null;
-        this._reset = null;
         this.root = null;
         this._gauges = [];
     }
 }
 
-// Everything specific to one Claude Code profile (one config directory / one
-// account): its own token client, panel block, and popup section. Multiple
-// instances are orchestrated by ClaudeUsageIndicator, which shares a single
-// panel icon, poll timer, and countdown across all of them.
+// One usage source (a Claude Code profile or Codex account): its token client,
+// panel block, and popup section. ClaudeUsageIndicator orchestrates all views
+// and shares the panel icon, poll timer, and countdown.
 class ProfileView {
     constructor(profile, settings, panelBox, sectionsBox, showChip, isFirst, allowSharedToken, path) {
         this.profile = profile;
         this._settings = settings;
-        this._client = new UsageClient({configDir: profile.configDir, settings, allowSharedToken, profileId: profile.id});
+        this._isCodex = profile.provider === 'codex';
+        this._client = this._isCodex
+            ? new CodexUsageClient()
+            : new UsageClient({configDir: profile.configDir, settings, allowSharedToken, profileId: profile.id});
         this._lastUsage = null;
         // Outcome of this profile's last refresh ('ok' | 'error' | 'signed-out'),
         // read by the indicator for the shared "Updated …" line.
@@ -796,11 +738,12 @@ class ProfileView {
         this._meters = new Map();
 
         // ---- panel block ----
-        // [profile divider] [chip] [tier icon] [tier label] [lead divider]
-        // [groups of gauges]. Both dividers here draw the lead-divider text:
+        // [profile divider] [source chip] [lead divider] [groups of gauges].
+        // Both dividers here draw the lead-divider text:
         // one between this profile and the previous one, one between this
         // block's leading elements and its gauges.
         this._panelBlock = new St.BoxLayout({style_class: 'cu-panel-block'});
+        this._panelBlock.visible = true;
         this._profileDivider = null;
         if (!isFirst) {
             this._profileDivider = new PanelDivider('cu-panel-divider-profile');
@@ -814,17 +757,7 @@ class ProfileView {
             });
             this._panelBlock.add_child(this._chip);
         }
-        // The tier icon has no image until the tier is known, and stays
-        // without one for a tier that has no artwork (see tierIconName).
-        this._path = path;
         this._isFirst = isFirst;
-        this._tierIcon = new St.Icon({
-            style_class: 'cu-panel-icon cu-panel-tier-icon',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._tierIcon.visible = false;
-        this._panelTier = new St.Label({text: '', style_class: 'cu-panel-tier', y_align: Clutter.ActorAlign.CENTER});
-        this._panelTier.visible = false;
         this._leadDivider = new PanelDivider();
         // One PanelGauge per window the panel-windows setting selects, keyed
         // by window key (like the popup meters) so gauges survive across
@@ -839,8 +772,6 @@ class ProfileView {
         // The UI settings' style, for the gauges, groups and meters made later; the
         // indicator hands over the current one right after construction.
         this._style = DEFAULT_STYLE;
-        this._panelBlock.add_child(this._tierIcon);
-        this._panelBlock.add_child(this._panelTier);
         this._panelBlock.add_child(this._leadDivider.root);
         this._panelBlock.add_child(this._gaugesBox);
         panelBox.add_child(this._panelBlock);
@@ -896,26 +827,19 @@ class ProfileView {
         const s = this._settings;
         for (const gauge of this._gauges.values())
             gauge.applyVisibility(s);
-        for (const group of this._groups)
-            group.applyVisibility(s);
-        // Both follow their widget: no tier yet (or signed out) means no
-        // label text, and a tier without artwork means no icon image.
-        this._panelTier.visible = s.get_boolean('show-tier') && this._panelTier.text !== '';
-        this._tierIcon.visible = s.get_boolean('show-tier-icon') && this._tierIcon.gicon !== null;
-        // The chip is only built with more than one profile, and is then
-        // toggleable — some people would rather not spend the panel width.
+        // The chip is built when more than one usage source is configured.
         if (this._chip)
             this._chip.visible = s.get_boolean('show-profile-chip');
 
-        // The lead divider: before every profile but the first, and between
-        // this block's leading elements and its gauges when it has any. The
-        // Claude icon is shared and sits in front of the first block, so it
-        // counts as a leading element of that block only.
+        // The lead divider separates tags from gauges and one source from the
+        // next. The shared Claude icon sits in front of the first block.
         const lead = s.get_string('panel-lead-divider');
-        const leading = !!this._chip?.visible || this._tierIcon.visible || this._panelTier.visible
-            || (this._isFirst && s.get_boolean('show-icon'));
+        const leading = !!this._chip?.visible || (this._isFirst && s.get_boolean('show-icon'));
         this._leadDivider.set(lead, leading);
-        this._profileDivider?.set(lead, true);
+        if (this._profileDivider) {
+            this._profileDivider.set(lead, true);
+            this._profileDivider.root.visible = !this._isCodex || this._panelBlock.visible;
+        }
     }
 
     // Applies the UI settings to the panel block and the popup section, and
@@ -936,8 +860,6 @@ class ProfileView {
         applyInline(this._panelBlock, style, 'panel-block');
         if (this._chip)
             applyInline(this._chip, style, 'panel-chip');
-        applyInline(this._tierIcon, style, ['panel-icon', 'panel-tier-icon']);
-        applyInline(this._panelTier, style, 'panel-tier');
         applyInline(this._gaugesBox, style, 'panel-gauges');
         this._profileDivider?.applyStyle(style);
         this._leadDivider.applyStyle(style);
@@ -958,31 +880,24 @@ class ProfileView {
         applyInline(label, this._style, cls, state);
     }
 
-    // Records the account's plan in the popup pill, the panel label, and the
-    // panel icon. Called on every poll, so it only acts on a change.
+    // Records the account's plan in the popup pill. Called on every poll, so
+    // it only acts on a change.
     _setTier(plan, rateLimitTier) {
         const label = tierLabel(plan, rateLimitTier);
         if (label === this._pill.text)
             return;
         this._pill.text = label;
         this._pill.visible = true;
-        this._panelTier.text = label.split(' ')[0];
-        const icon = tierIconName(label);
-        this._tierIcon.gicon = icon
-            ? Gio.icon_new_for_string(`${this._path}/icons/tier-${icon}-symbolic.svg`)
-            : null;
-        this.applyVisibility();
     }
 
     _clearTier() {
         this._pill.text = '';
         this._pill.visible = false;
-        this._panelTier.text = '';
-        this._tierIcon.gicon = null;
-        this.applyVisibility();
     }
 
     async applyTierFromDisk(cancellable) {
+        if (this._isCodex)
+            return;
         try {
             const {subscriptionType, rateLimitTier} = await this._client.tierFromDisk();
             if (cancellable.is_cancelled())
@@ -997,9 +912,22 @@ class ProfileView {
         }
     }
 
-    // Fetches usage + profile for this account only; never rejects (errors are
-    // reported through renderError). Caller drives concurrency across profiles.
+    // Fetches usage for this source; Claude also fetches its profile. Errors
+    // are reported through renderError, while the caller drives concurrency.
     async refresh(cancellable) {
+        if (this._isCodex) {
+            try {
+                const usage = await this._client.fetchUsage(cancellable);
+                if (cancellable.is_cancelled())
+                    return;
+                this._render(usage, null);
+            } catch (e) {
+                if (cancellable.is_cancelled())
+                    return;
+                this._renderError(e);
+            }
+            return;
+        }
         const [usageRes, profileRes] = await Promise.allSettled([
             this._client.fetchUsage(cancellable),
             this._client.fetchProfile(cancellable),
@@ -1018,6 +946,9 @@ class ProfileView {
     _render(usage, profile) {
         this._error.visible = false;
         this._lastUsage = usage;
+        this._panelBlock.visible = true;
+        if (this._profileDivider)
+            this._profileDivider.root.visible = true;
 
         if (profile?.account) {
             const sub = profile.application?.name ?? 'Claude';
@@ -1034,12 +965,14 @@ class ProfileView {
                 ?? (profile.account.has_claude_max ? 'max'
                     : profile.account.has_claude_pro ? 'pro' : null);
             this._setTier(plan, profile.organization?.rate_limit_tier);
+        } else if (this._isCodex) {
+            const plan = String(usage?.plan_type ?? '').replace(/[_-]+/g, ' ').trim();
+            this._subtitle.text = plan ? `ChatGPT · ${plan}` : 'ChatGPT';
         }
 
-        // Build the meter list from the normalised windows. The model prefers
-        // the API's self-describing limits[] array (which now carries per-model
-        // windows like Fable) and falls back to the legacy flat keys.
-        this._windows = normalizeWindows(usage);
+        // Build the meter list from the normalised provider windows.
+        const normalizedUsage = this._isCodex ? normalizeCodexUsage(usage) : usage;
+        this._windows = normalizeWindows(normalizedUsage);
         this._meterBindings = [];
         const seen = new Set();
         for (const w of this._windows) {
@@ -1067,7 +1000,7 @@ class ProfileView {
             }
         }
 
-        this._renderSpend(usage);
+        this._renderSpend(normalizedUsage);
 
         // Before renderPanel: it keeps the '!' for as long as this says 'error'.
         this.lastResult = 'ok';
@@ -1091,7 +1024,8 @@ class ProfileView {
                 this._spendMeter.applyStyle(this._style);
                 this._section.insert_child_below(this._spendMeter.root, this._error);
             }
-            this._spendMeter.setValue(spend.percent, parts.join(' / '), spend.level);
+            this._spendMeter.setValue(spend.percent, parts.join(' / '), spend.level,
+                this._displayPercent(spend.percent));
             this._extra.visible = false;
             return;
         }
@@ -1138,7 +1072,7 @@ class ProfileView {
     }
 
     // Re-applies the last fetched usage so the time-derived parts move between
-    // polls: the reset countdowns and the burn-rate colors. Nothing is
+    // polls: the popup reset captions and the burn-rate colors. Nothing is
     // fetched. The popup's meters only need it while the menu is open (the
     // indicator also calls this the moment it opens).
     refreshCountdowns(menuOpen) {
@@ -1171,7 +1105,24 @@ class ProfileView {
         if (note)
             caption = caption ? `${caption} · ${note}` : note;
 
-        meter.setValue(util, caption, level);
+        meter.setValue(util, caption, level, this._displayPercent(util));
+    }
+
+    _displayPercent(util) {
+        if (this._settings.get_string('percentage-display') === 'left')
+            return Math.max(0, 100 - Number(util));
+        return Number(util);
+    }
+
+    applyPercentageDisplay() {
+        for (const {meter, w} of this._meterBindings)
+            this._applyWindow(meter, w);
+        if (this._spendMeter && Number.isFinite(this._spend?.percent)) {
+            const parts = [this._spend.used, this._spend.limit].filter(Boolean);
+            this._spendMeter.setValue(this._spend.percent, parts.join(' / '), this._spend.level,
+                this._displayPercent(this._spend.percent));
+        }
+        this.renderPanel();
     }
 
     // Final level for a normalised window: the computed burn consequence,
@@ -1180,14 +1131,12 @@ class ProfileView {
         return maxLevel(windowLevel(w.utilization, w.resetsAt, w.totalSeconds), w.apiLevel);
     }
 
-    // Which normalised usage windows the panel shows, per the panel-windows
-    // preference (any mix of 5-hour / 7-day / per-model / max / worst, merged
-    // and kept in role order). The 'worst' selector ranks by the computed
-    // severity, then utilization, over the active limits — that is how a 100%
-    // scoped window (e.g. Fable) reaches the panel even when the session and
-    // weekly totals are calm.
+    // Which normalised usage windows the panel shows. Only the 5-hour and
+    // 7-day selectors are exposed or used by the panel.
     _panelWindows() {
-        return selectPanelWindows(this._windows, this._settings.get_strv('panel-windows'),
+        const selectors = this._settings.get_strv('panel-windows')
+            .filter(key => key === 'five-hour' || key === 'seven-day');
+        return selectPanelWindows(this._windows, selectors,
             w => LEVEL_RANK[this._windowLevel(w)] * 1000 + (Number(w.utilization) || 0));
     }
 
@@ -1204,9 +1153,8 @@ class ProfileView {
         return gauge;
     }
 
-    // Syncs the panel with the selected windows. Runs after every poll, on
-    // preference changes, and on the countdown tick (the 'worst' selector
-    // depends on the burn rate, so the selection can move between polls).
+    // Syncs the panel with the selected windows after every poll, preference
+    // change, and countdown tick.
     // The layout — which gauges exist, how they group, dividers, tags — is
     // only redone when its signature changes, so an unchanged panel costs a
     // string compare; the values are then re-applied, which is cheap.
@@ -1243,7 +1191,6 @@ class ProfileView {
             this._groups.pop().destroy();
         while (this._groups.length < groups.length) {
             const group = new PanelGroup();
-            group.applyVisibility(this._settings);
             group.applyStyle(this._style);
             this._gaugesBox.add_child(group.root);
             this._groups.push(group);
@@ -1252,17 +1199,16 @@ class ProfileView {
             this._groups[i].setGauges(keysOf(g).map(key => this._gauge(key)));
             this._groups[i].setDivider(divider, i > 0);
             for (const w of g.windows)
-                this._gauges.get(w.key).setTag(windowTag(w), tagged, w.role === 'scoped');
+                this._gauges.get(w.key).setTag(windowTag(w), tagged);
         });
     }
 
-    // Values, colors and countdowns for the laid-out groups. After a failed
-    // refresh every gauge reads '!', and keeps reading it through countdown
+    // Values and colors for the laid-out groups. After a failed refresh every
+    // gauge reads '!', and keeps reading it through countdown
     // ticks and preference changes, until a fetch succeeds again.
     _updatePanel(groups) {
         const failed = this.lastResult === 'error';
         groups.forEach((g, i) => {
-            this._groups[i].setReset(failed ? null : g.resetsAt);
             if (!g.windows.length) {
                 // The placeholder keeps its '…' until the first result is in.
                 // An account with no rate-limit windows at all (pooled or
@@ -1273,7 +1219,7 @@ class ProfileView {
                 if (failed)
                     gauge.setError();
                 else if (spend && Number.isFinite(spend.percent))
-                    gauge.setValue(spend.percent, spend.level);
+                    gauge.setValue(spend.percent, spend.level, this._displayPercent(spend.percent));
                 else if (this.lastResult !== null)
                     gauge.setUnknown();
                 return;
@@ -1283,7 +1229,7 @@ class ProfileView {
                 if (failed)
                     gauge.setError();
                 else if (Number.isFinite(w.utilization))
-                    gauge.setValue(w.utilization, this._windowLevel(w));
+                    gauge.setValue(w.utilization, this._windowLevel(w), this._displayPercent(w.utilization));
                 else
                     gauge.setUnknown();
             }
@@ -1310,15 +1256,19 @@ class ProfileView {
         this.renderPanel();
         let msg;
         if (e instanceof UsageError && e.status === 401)
-            msg = 'Session expired. Sign in via Claude Code or Settings.';
+            msg = this._isCodex ? 'Codex session expired. Run codex login.'
+                : 'Session expired. Sign in via Claude Code or Settings.';
         else if (e instanceof UsageError && e.status === 403)
             // The API refuses to serve usage for this account: typically no
             // active subscription, even though auth itself succeeded (so the
             // profile fetch above can still show a stale plan/tier). Prefer
             // the API's own wording since it may name the actual cause.
-            msg = e.apiMessage() || 'No active Claude subscription for this account.';
+            msg = e.apiMessage() || (this._isCodex
+                ? 'No active Codex usage plan for this account.'
+                : 'No active Claude subscription for this account.');
         else if (e instanceof UsageError && e.status === 429)
-            msg = 'Rate limited by Claude; will retry shortly.';
+            msg = this._isCodex ? 'Rate limited by Codex; will retry shortly.'
+                : 'Rate limited by Claude; will retry shortly.';
         else
             msg = e.message || 'Could not reach Claude';
         this._error.text = msg;
@@ -1342,6 +1292,11 @@ class ProfileView {
         this._subtitle.text = 'Signed out';
         this._clearTier();
         this._extra.visible = false;
+        if (this._isCodex) {
+            this._panelBlock.visible = false;
+            if (this._profileDivider)
+                this._profileDivider.root.visible = false;
+        }
 
         // Not a failure: the subtitle and note already say "signed out".
         this.lastResult = 'signed-out';
@@ -1375,8 +1330,6 @@ class ProfileView {
         this._groups = [];
         this._gaugesBox?.destroy();
         this._chip?.destroy();
-        this._tierIcon?.destroy();
-        this._panelTier?.destroy();
         this._leadDivider?.destroy();
         this._profileDivider?.destroy();
         this._panelBlock?.destroy();
@@ -1392,8 +1345,6 @@ class ProfileView {
 
         this._gaugesBox = null;
         this._chip = null;
-        this._tierIcon = null;
-        this._panelTier = null;
         this._leadDivider = null;
         this._profileDivider = null;
         this._panelBlock = null;
@@ -1414,7 +1365,7 @@ class ProfileView {
 const ClaudeUsageIndicator = GObject.registerClass(
 class ClaudeUsageIndicator extends PanelMenu.Button {
     _init(path, settings, openPreferences) {
-        super._init(0.5, 'Claude Code Usage Monitor');
+        super._init(0.5, 'Claude and Codex Usage Monitor');
 
         this._path = path;
         this._settings = settings;
@@ -1459,10 +1410,8 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             'changed::show-icon', () => this._applyVisibility(),
             'changed::panel-gauge', () => this._applyVisibility(),
             'changed::show-percentage', () => this._applyVisibility(),
-            'changed::show-tier', () => this._applyVisibility(),
-            'changed::show-tier-icon', () => this._applyVisibility(),
+            'changed::percentage-display', () => this._applyPercentageDisplay(),
             'changed::panel-lead-divider', () => this._applyVisibility(),
-            'changed::show-reset', () => this._applyVisibility(),
             'changed::show-profile-chip', () => this._applyVisibility(),
             'changed::panel-windows', () => this._renderAllPanels(),
             'changed::panel-divider', () => this._renderAllPanels(),
@@ -1496,11 +1445,21 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
     _buildProfileViews(profiles) {
         this._destroyProfileViews();
-        const showChip = profiles.length > 1;
+        const sources = [...profiles, {
+            id: 'codex',
+            label: 'Codex',
+            configDir: defaultCodexHome(),
+            provider: 'codex',
+        }];
+        const showChip = sources.length > 1;
         // Only the profile the single in-app token can belong to may fall back
         // to it: the sole profile, or the one owning the default ~/.claude dir.
         const defaultDir = Gio.File.new_for_path(defaultConfigDir());
-        this._profileViews = profiles.map((profile, i) => {
+        this._profileViews = sources.map((profile, i) => {
+            if (profile.provider === 'codex') {
+                return new ProfileView(profile, this._settings, this._panelBox,
+                    this._sectionsBox, showChip, i === 0, false, this._path);
+            }
             const ownsDefaultDir = Gio.File.new_for_path(profile.configDir).equal(defaultDir);
             const allowSharedToken = profiles.length === 1 || ownsDefaultDir;
             return new ProfileView(profile, this._settings, this._panelBox,
@@ -1539,7 +1498,7 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
 
         // actions
         this._actions = new St.BoxLayout({style_class: 'cu-actions'});
-        this._usageBtn = new St.Button({label: 'Usage page', style_class: 'cu-btn', x_expand: true});
+        this._usageBtn = new St.Button({label: 'Claude usage page', style_class: 'cu-btn', x_expand: true});
         this._usageBtn.connectObject(
             'clicked', () => {
                 this.menu.close();
@@ -1610,6 +1569,11 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             view.applyVisibility();
         if (this._refreshBtn)
             this._refreshBtn.label = this._profileViews.length > 1 ? '↻ Refresh all' : '↻ Refresh';
+    }
+
+    _applyPercentageDisplay() {
+        for (const view of this._profileViews)
+            view.applyPercentageDisplay();
     }
 
     // Applies the UI settings (the ui-style key: the style values changed from

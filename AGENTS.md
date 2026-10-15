@@ -1,10 +1,9 @@
-# Claude Code Usage Monitor (GNOME Shell extension)
+# Claude and Codex Usage Monitor (GNOME Shell extension)
 
-A GNOME Shell panel indicator that shows your Claude subscription tier and live
-usage limits (5-hour and 7-day windows). It reuses the OAuth token that Claude
-Code already stores on disk, so there is usually no separate login. Each profile
-can also sign in on its own, from a PKCE flow in its row in prefs, for accounts
-that never use the CLI.
+A GNOME Shell panel indicator that shows Claude and Codex usage limits (5-hour
+and 7-day windows) in the panel and popup. Claude reuses Claude Code credentials
+or a per-profile PKCE sign-in. Codex reads the ChatGPT OAuth session from the
+local Codex `auth.json` and leaves that file to Codex CLI to refresh.
 
 ## Layout
 
@@ -12,15 +11,13 @@ The shipped extension lives in `src/`; everything else (this file, the README,
 the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
 
 - `src/extension.js` — panel indicator + dropdown UI (ESM, GNOME Shell 45+
-  style). `ProfileView` holds everything specific to one Claude Code profile
-  (its `UsageClient`, panel block, and popup section); `ClaudeUsageIndicator`
-  owns one `ProfileView` per configured profile, plus the shared panel icon,
-  poll timer, and countdown. The panel shows a Claude icon once, then one
-  block per profile: `[profile divider] [chip] [tier icon] [tier label]
-  [lead divider]`, then `PanelGroup`s, each `[window divider] gauges…
-  [reset countdown]`. There is one `PanelGauge` (tag, ring/bar, percentage)
-  per usage window selected by `panel-windows`, keyed by window like the
-  popup meters so gauges are reused across polls and move between groups.
+  style). `ProfileView` owns the panel block and popup section for one Claude
+  profile or the Codex source; `ClaudeUsageIndicator` owns those views, the
+  shared Claude icon, poll timer, and countdown. The panel shows one block per
+  source: `[profile divider] [source tag] [lead divider] gauges…`. Each source
+  has one `PanelGauge` (window tag, ring/bar, percentage) for each selected
+  5-hour or 7-day window. Percentage text can show used or remaining capacity;
+  the gauge fill continues to show usage.
   Its ring and bar sit in a `Clutter.BinLayout` stack, so the one percentage
   label can go on top of the gauge shown instead of after it
   (`_syncPctPlace()`, from the `panel-pct.position` UI value; it reparents
@@ -28,37 +25,27 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   not involved). `panel-pct.sign` drops the "%" (`_syncPctText()`), and over
   the bar the label takes no warn/crit state, since those text colors are
   unreadable on a fill of the same color.
-  Each element is independently toggleable via GSettings (the toggles apply
-  to every gauge of every profile uniformly). With several gauges in one
-  block each carries a short window tag ("5h", "7d", model name).
-  - Groups: `groupPanelWindows()` (usageModel.js) puts the weekly and
-    per-model windows whose resets are within 5 minutes (or unknown) in one
-    group, whose `resetsAt` is the first known reset. The window divider
-    sits between groups only, and the countdown is the group's, shown once.
+  The usage percentage, source tag, gauge type, percentage mode, and 5-hour /
+  7-day switches apply to Claude and Codex uniformly. The shared Claude icon
+  is controlled separately. With both windows selected each gauge carries a
+  short tag ("5h", "7d").
+  - Groups: `groupPanelWindows()` (usageModel.js) puts windows whose resets
+    are within 5 minutes (or unknown) in one group, whose `resetsAt` is the
+    first known reset. With the exposed panel selectors, each group has one
+    window; the divider sits between groups only.
   - Dividers: `PanelDivider` draws both settings. `panel-divider` (window
     divider) goes before every group but the first; `panel-lead-divider`
-    goes between a block's leading elements (chip, tier icon/label, and for
+    goes between a block's leading elements (source chip, and for
     the first block the shared Claude icon) and its gauges, and before every
     profile block but the first (`ProfileView.applyVisibility()`). Blank
     shows nothing, exactly `|` draws a 1px line, other text is a label.
-  - `renderPanel()` runs after every poll, preference change and countdown
+  - `renderPanel()` runs after every poll, preference change and timer
     tick. It re-lays-out (`_layoutPanel`) only when the layout signature
     (window keys per group, tags, divider text) changed, then re-applies
     values (`_updatePanel`). While `lastResult === 'error'` every gauge
     reads `!`, so set `lastResult` before calling it. The tick
     (`_scheduleCountdown`, 30s, or 1s under 90s to a reset) fetches nothing;
     popup meters are only re-applied while the menu is open.
-  - Tier icons are `src/icons/tier-<name>-symbolic.svg` (the `-symbolic`
-    suffix makes the shell recolor them; every path becomes the foreground
-    color, and the second tone is `opacity`, so use fills only, no strokes
-    or masks). That foreground color is `.cu-panel-tier-icon`'s `color` in
-    the stylesheet, by default the Claude icon's orange (`#D97757`) and
-    changeable under "Top-Bar UI"; the fill in the files themselves is
-    never shown. `TIER_ICONS` + `tierIconName()` in usageModel.js map a tier
-    label to a name: `max-20x`, then the base `max`, else null, which hides
-    the icon. Add a name to `TIER_ICONS` when adding its file (a test checks
-    each listed name has one). Original artwork is in `assets/tier-icons/`;
-    the shipped files are `svgo`-optimised copies.
   - Style: every panel widget has an `applyStyle(style)` next to its
     `applyVisibility()`. `ClaudeUsageIndicator._applyStyle()` resolves the
     `ui-style` setting with `uiStyle()` (uiStyle.js) on a change and hands it
@@ -73,15 +60,12 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
     the popup half of `ProfileView.applyStyle()` (`_setLineState()` keeps the
     extra-usage / error line's state class and inline style together), and
     the popup shell in `ClaudeUsageIndicator._applyStyle()`. An inline
-    background beats the stylesheet's `:hover`, so while the button's
-    background is changed `_styleUsageButton()` sets a derived hover shade
-    (`hoverShade`) on `notify::hover`. A per-model window's tag carries
-    `cu-panel-wtag-model` on top of `cu-panel-wtag` (`PanelGauge.setTag`), and
-    gets the inline style of both. `PanelGroup._syncResetText()` writes the
-    countdown as Pango markup (`boldNumbersMarkup`) while the
-    `panel-reset.bold-numbers` value is on, as plain text otherwise.
-- `src/prefs.js` — Adwaita preferences (element toggles, the "Panel reflects"
-  window switches, refresh interval, the "Claude profiles" list), bound to
+  background beats the stylesheet's `:hover`, so while the button's
+  background is changed `_styleUsageButton()` sets a derived hover shade
+  (`hoverShade`) on `notify::hover`.
+- `src/prefs.js` — Adwaita preferences (panel visibility, percentage mode,
+  the two "Panel reflects" window switches, refresh interval, the "Claude
+  profiles" list), bound to
   GSettings, on the "General" tab, plus one tab per entry of `UI_PAGES`
   ("Shared UI", "Top-Bar UI", "Popup UI") built by `lib/uiStylePage.js` (the top-bar one
   is also where the two divider texts are edited). Each profile row
@@ -89,10 +73,11 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   "Using Claude Code", "Connected", or "Not connected", plus Connect, a field
   for the pasted code, and Disconnect.
 - `src/schemas/` — GSettings schema (`org.gnome.shell.extensions.claude-usage`).
-  Keys: `show-icon`/`show-percentage`/`show-tier` (label)/`show-tier-icon`/`show-reset` (bool),
+  Keys: `show-icon`/`show-percentage`/`show-profile-chip` (bool),
+  `percentage-display` (`used`|`left`),
   `panel-gauge` (`ring`|`bar`|`none`),
-  `panel-windows` (`as`, any of `five-hour`|`seven-day`|`scoped`|`max`|`worst`;
-  one panel gauge per matched window, merged and shown in role order),
+  `panel-windows` (`as`, `five-hour` and/or `seven-day`; one panel gauge per
+  selected window, shown in role order),
   `panel-window` (deprecated single-valued predecessor, read once by
   `migratePanelWindows()` to seed `panel-windows`), `panel-divider` (window
   divider: string drawn between gauge groups; default `' '`) and
@@ -106,7 +91,6 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   registered with `Main.wm.addKeybinding` like the shell's own panel menus),
   `profiles` (JSON string, array of `{id, label, configDir}`),
   `profile-tokens` (JSON string, profile id -> in-app tokens),
-  `show-profile-chip` (bool),
   `ui-style` (JSON string, id -> value for each "Shared UI" / "Top-Bar UI" / "Popup UI"
   value changed from its default; see `lib/uiStyle.js`),
   `profiles-initialized` (bool, set once auto-detection has seeded `profiles`
@@ -125,6 +109,10 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   `claudeCodeCredentialsAvailable(configDir)`, `defaultConfigDir()`
   (`~/.claude`), and `discoverConfigDirs()` (finds `~/.claude` and sibling
   `~/.claude-*` directories that already hold credentials).
+- `src/lib/codexUsageClient.js` — reads `tokens.access_token` and the account
+  ID (from `tokens.account_id`, falling back to the ID token claim)
+  asynchronously from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`, then fetches the ChatGPT WHAM usage response. It does
+  not write or refresh Codex credentials; Codex CLI owns that lifecycle.
 - `src/lib/profiles.js` — the profile list: `loadProfiles`/`saveProfiles`
   (JSON in the `profiles` GSettings key) and `ensureProfiles` (seeds the list
   from `discoverConfigDirs()` once, gated by `profiles-initialized`). Kept
@@ -139,11 +127,11 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
 - `src/lib/uiStyle.js` — the UI settings: a table (`UI_STYLE_GROUPS`) of
   every style value preferences can change, each group on exactly one of
   the `UI_PAGES` tabs (`page`: `shared`, `topbar` or `popup`), each value with an id
-  (`panel-tier.font-size`, `usage-text.warn`), a type (`px`, `pt`,
+  (`panel-chip.font-size`, `usage-text.warn`), a type (`px`, `pt`,
   `color`, `choice`, `bool`), its default, and its targets (style class,
   optional state class, `ok`/`warn`/`crit` or `dim`, and CSS properties;
-  none for a value the extension paints or acts on itself: the ring's, the
-  `bold-numbers` switch, the percentage's `position` and `sign`). One value can have several targets, and that is
+  none for a value the extension paints or acts on itself: the ring's and the
+  percentage's `position` and `sign`). One value can have several targets, and that is
   the rule rather than the exception: values meant to be the same thing are
   one setting (the shared "Usage colors" for the ring, the bar gauge, the
   popup meters and their text; one spacing for the panel's boxes; one
@@ -157,10 +145,9 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   later in an inline style and wins. That is how "Shared UI" works: its
   "Common values" (`muted.color`, `line.color`, `bar.border-radius`,
   `pct.font-weight`) target every class concerned and hold the default, and
-  each element's own value on the other two tabs (`panel-tier.color`,
+  each element's own value on the other two tabs (`panel-chip.color`,
   `secondary.color`, `separator.color`, …) follows one of them, so the shared
-  groups come first in the table. The model tag follows the window tag the
-  same way, within one tab. An unchanged follower writes nothing, so the
+  groups come first in the table. An unchanged follower writes nothing, so the
   value it follows must have the same state targets (a test checks it). A
   `def: null` without `inherits` means "the panel's own" and is for the
   percentage's color and font size only. A group may also list `settings`, plain string
@@ -199,14 +186,16 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   selection (`selectPanelWindows` over the `panel-windows` selectors,
   `windowTag` for the short panel tags, `migratePanelWindows` for the
   `panel-window` upgrade). No GI or shell imports, so it is unit-testable
-  under plain `node` (see `tools/test-usageModel.mjs`).
+  under plain `node` (see `tools/test-usageModel.mjs`). `normalizeCodexUsage()`
+  converts Codex's primary/secondary rate-limit windows into the same 5-hour
+  and 7-day representation.
 - `src/stylesheet.css` — `cu-*` classes for the indicator and popup, and the
   defaults of every UI setting. Values shared between classes are declared
   once with a grouped selector (the first block, the panel's spacing, the
   popup's secondary text and separator lines); keep it that way, since one
   setting drives all of them. Only classes that extension.js uses.
 - `src/icons/` — panel icon (`claude-spark.svg`), popup logo
-  (`octopus.png`), and the recolorable tier icons
+  (`octopus.png`), and legacy recolorable tier icons
   (`tier-<name>-symbolic.svg`, one per name in `TIER_ICONS`). `assets/` holds
   repo-only originals that stay out of the bundle (`assets/tier-icons/`).
 - `build.sh` — runs `gnome-extensions pack src` into `dist/`, including `lib`,
@@ -250,6 +239,11 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   `anthropic-version: 2023-06-01`.
 - Refresh: `POST https://platform.claude.com/v1/oauth/token` with
   `grant_type=refresh_token` and the public Claude Code `client_id`.
+- Codex limits: `GET https://chatgpt.com/backend-api/wham/usage` with the
+  bearer token and account id from Codex's local `auth.json`. The response's
+  `rate_limit.primary_window` and `secondary_window` report `used_percent`,
+  `limit_window_seconds`, and reset timestamps. This is an undocumented
+  ChatGPT endpoint used by Codex clients; the local auth file is read only.
 
 These are undocumented internal endpoints and may change without notice.
 

@@ -162,6 +162,52 @@ export function normalizeWindows(usage) {
     return out;
 }
 
+// Convert the Codex/ChatGPT WHAM response into the same self-describing limit
+// shape used by normalizeWindows(). The primary/secondary slots can move as
+// plans change, so use the window duration when it is present and fall back to
+// their usual 5-hour / weekly order when it is not.
+function codexResetAt(window) {
+    const value = window?.reset_at;
+    if (typeof value === 'string' && !Number.isFinite(Number(value)))
+        return value;
+    const timestamp = Number(value);
+    if (Number.isFinite(timestamp) && timestamp > 0)
+        return new Date(timestamp > 1e12 ? timestamp : timestamp * 1000).toISOString();
+    const after = Number(window?.reset_after_seconds);
+    if (Number.isFinite(after) && after > 0)
+        return new Date(Date.now() + after * 1000).toISOString();
+    return null;
+}
+
+export function normalizeCodexUsage(usage) {
+    const rateLimit = usage?.rate_limit;
+    const windows = [rateLimit?.primary_window, rateLimit?.secondary_window];
+    const limits = [];
+    const seen = new Set();
+
+    windows.forEach((window, index) => {
+        if (!window || window.used_percent == null || !Number.isFinite(Number(window.used_percent)))
+            return;
+        const duration = Number(window.limit_window_seconds);
+        const role = Number.isFinite(duration) && duration > 0
+            ? (duration >= 2 * 24 * 60 * 60 ? 'weekly' : 'session')
+            : (index === 0 ? 'session' : 'weekly');
+        if (seen.has(role))
+            return;
+        seen.add(role);
+        limits.push({
+            kind: role === 'session' ? 'session' : 'weekly_all',
+            group: role === 'session' ? 'session' : 'weekly',
+            percent: Number(window.used_percent),
+            severity: 'normal',
+            resets_at: codexResetAt(window),
+            is_active: Number(window.used_percent) > 0,
+        });
+    });
+
+    return {plan_type: usage?.plan_type ?? null, limits};
+}
+
 // Format a structured minor-unit money amount ({amount_minor, currency,
 // exponent}) as e.g. "USD 416.54". Returns null when the amount is missing.
 function formatMinor(m) {
@@ -229,7 +275,7 @@ export function migratePanelWindows(settings) {
     if (settings.get_user_value('panel-window') === null)
         return;
     const old = settings.get_string('panel-window');
-    if (PANEL_SELECTORS.includes(old))
+    if (old === 'five-hour' || old === 'seven-day')
         settings.set_strv('panel-windows', [old]);
 }
 
