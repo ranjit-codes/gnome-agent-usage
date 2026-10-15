@@ -130,7 +130,7 @@ export default class ClaudeUsagePreferences extends ExtensionPreferences {
 
         const chipRow = new Adw.SwitchRow({
             title: 'Profile tag',
-            subtitle: 'Show a short tag (e.g. "CL" or "CO") before each source\'s gauge when more than one is shown.',
+            subtitle: 'Show a short tag before each Claude gauge when more than one Claude profile is configured.',
         });
         elements.add(chipRow);
         settings.bind('show-profile-chip', chipRow, 'active', Gio.SettingsBindFlags.DEFAULT);

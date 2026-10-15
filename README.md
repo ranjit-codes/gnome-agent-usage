@@ -19,7 +19,7 @@ See [install](#install) instructions
 
 ## Features
 
-- **Panel indicator** for Claude and Codex with a Claude icon, optional source tags, a circular ring or horizontal bar (or no gauge), and usage percentages shown as either used or left.
+- **Panel indicator** for Claude and Codex with a provider icon for each, Claude profile tags when you have multiple profiles, a circular ring or horizontal bar (or no gauge), and usage percentages shown as either used or left. The gauge fill follows that same used/left percentage.
 - **Multiple profiles.** If you run more than one Claude Code account on this machine (via `CLAUDE_CONFIG_DIR`, e.g. `~/.claude` and `~/.claude-work`), the extension shows every configured profile side by side in the panel and the dropdown, and refreshes them all together. Profiles are auto-detected on first run; add, rename, repoint, or remove them from the "Claude profiles" group in preferences.
 - **Dropdown** with 5-hour and 7-day meters for each configured Claude profile and the signed-in Codex account.
 - **Rate projection.** Meters, the ring, and the panel percentage are colored by your projected end-of-window usage at the current burn rate, so a fast burn turns amber or red before you actually hit the limit. When a window is on track to run out early, the caption spells it out (for example `burning fast — out in ~1h20m at this rate`); a window that is merely rising shows `on track for ~N% by reset`.

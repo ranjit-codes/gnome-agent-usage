@@ -21,9 +21,7 @@ import {
     normalizeWindows, normalizeCodexUsage, normalizeSpend, selectPanelWindows, groupPanelWindows, windowTag,
     migratePanelWindows,
 } from './lib/usageModel.js';
-import {uiStyle, loadOverrides, hoverShade, formatColor} from './lib/uiStyle.js';
-
-const USAGE_SETTINGS_URL = 'https://claude.ai/settings/usage';
+import {uiStyle, loadOverrides} from './lib/uiStyle.js';
 
 // Severity levels, least to most severe.
 const LEVEL_RANK = {ok: 0, warn: 1, crit: 2};
@@ -229,7 +227,7 @@ function wrapLabel(label) {
     return label;
 }
 
-// A labelled progress meter: title + percentage row, bar, and reset caption.
+// A labelled progress meter: title + percentage row, matching bar, and reset caption.
 class Meter {
     constructor(name) {
         this.root = new St.BoxLayout({...VERTICAL_BOX, style_class: 'cu-meter'});
@@ -271,11 +269,11 @@ class Meter {
         applyInline(this._caption, style, 'caption');
     }
 
-    // The bar width tracks actual utilization; level (defaults to the util's
-    // own level) drives the color, so projection can tint without resizing.
+    // The bar width tracks the displayed percentage; level still reflects
+    // actual utilization and its burn-rate projection.
     setValue(util, caption, level = utilLevel(util), displayPercent = util) {
         this._pct.text = `${Math.round(displayPercent)}%`;
-        this._fraction = Math.max(0, Math.min(100, util)) / 100;
+        this._fraction = Math.max(0, Math.min(100, displayPercent)) / 100;
         this._resizeFill();
         this._level = level;
         this._fill.style_class = `cu-fill ${levelClass(level)}`;
@@ -328,7 +326,7 @@ class Meter {
     }
 }
 
-// A compact circular usage gauge for the panel, drawn with Cairo.
+// A compact circular gauge for the displayed percentage, drawn with Cairo.
 const Ring = GObject.registerClass(
 class Ring extends St.DrawingArea {
     _init() {
@@ -337,7 +335,7 @@ class Ring extends St.DrawingArea {
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
-        this._util = null;
+        this._percent = null;
         this._level = null;
         this.applyStyle(DEFAULT_STYLE);
     }
@@ -355,19 +353,19 @@ class Ring extends St.DrawingArea {
 
     // Both setters are called on every countdown tick with values that rarely
     // change, so an unchanged value queues no repaint.
-    setValue(util, level = utilLevel(util)) {
-        const clamped = Math.max(0, Math.min(100, util));
-        if (clamped === this._util && level === this._level)
+    setValue(percent, level = utilLevel(percent)) {
+        const clamped = Math.max(0, Math.min(100, percent));
+        if (clamped === this._percent && level === this._level)
             return;
-        this._util = clamped;
+        this._percent = clamped;
         this._level = level;
         this.queue_repaint();
     }
 
     setUnknown() {
-        if (this._util === null && this._level === null)
+        if (this._percent === null && this._level === null)
             return;
-        this._util = null;
+        this._percent = null;
         this._level = null;
         this.queue_repaint();
     }
@@ -389,9 +387,9 @@ class Ring extends St.DrawingArea {
         cr.arc(cx, cy, radius, 0, 2 * Math.PI);
         cr.stroke();
 
-        if (this._util !== null && this._util > 0) {
-            cr.setSourceRGBA(...this._colors[this._level ?? utilLevel(this._util)]);
-            cr.arc(cx, cy, radius, start, start + (this._util / 100) * 2 * Math.PI);
+        if (this._percent !== null && this._percent > 0) {
+            cr.setSourceRGBA(...this._colors[this._level ?? utilLevel(this._percent)]);
+            cr.arc(cx, cy, radius, start, start + (this._percent / 100) * 2 * Math.PI);
             cr.stroke();
         }
 
@@ -399,8 +397,8 @@ class Ring extends St.DrawingArea {
     }
 });
 
-// A compact horizontal usage bar for the panel: the same data as the ring, but
-// drawn as a small track + fill. Mirrors the Ring API (setValue/setUnknown).
+// A compact horizontal gauge for the displayed percentage, drawn as a small
+// track + fill. Mirrors the Ring API (setValue/setUnknown).
 class PanelBar {
     constructor() {
         this.root = new St.BoxLayout({
@@ -410,24 +408,24 @@ class PanelBar {
         });
         this._fill = new St.Widget({style_class: 'cu-panel-bar-fill'});
         this.root.add_child(this._fill);
-        this._util = null;
+        this._percent = null;
         this._level = null;
         this._style = DEFAULT_STYLE;
     }
 
-    setValue(util, level = utilLevel(util)) {
-        const clamped = Math.max(0, Math.min(100, util));
-        if (clamped === this._util && level === this._level)
+    setValue(percent, level = utilLevel(percent)) {
+        const clamped = Math.max(0, Math.min(100, percent));
+        if (clamped === this._percent && level === this._level)
             return;
-        this._util = clamped;
+        this._percent = clamped;
         this._level = level;
         this._syncFill();
     }
 
     setUnknown() {
-        if (this._util === null && this._level === null)
+        if (this._percent === null && this._level === null)
             return;
-        this._util = null;
+        this._percent = null;
         this._level = null;
         this._syncFill();
     }
@@ -442,7 +440,7 @@ class PanelBar {
     // level class, and the inline style that goes with that level.
     _syncFill() {
         const width = this._style.value('panel-bar.width');
-        this._fill.set_width(Math.round(((this._util ?? 0) / 100) * width));
+        this._fill.set_width(Math.round(((this._percent ?? 0) / 100) * width));
         this._fill.style_class = this._level ? `cu-panel-bar-fill ${levelClass(this._level)}` : 'cu-panel-bar-fill';
         applyInline(this._fill, this._style, 'panel-bar-fill', this._level);
     }
@@ -564,8 +562,8 @@ class PanelGauge {
         this._displayPercent = displayPercent;
         this._syncPctText();
         this._setLevel(level);
-        this._ring.setValue(util, level);
-        this._bar.setValue(util, level);
+        this._ring.setValue(displayPercent, level);
+        this._bar.setValue(displayPercent, level);
     }
 
     setUnknown() {
@@ -738,12 +736,19 @@ class ProfileView {
         this._meters = new Map();
 
         // ---- panel block ----
-        // [profile divider] [source chip] [lead divider] [groups of gauges].
-        // Both dividers here draw the lead-divider text:
-        // one between this profile and the previous one, one between this
-        // block's leading elements and its gauges.
+        // [profile divider] [Codex logo / Claude profile tag] [lead divider]
+        // [groups of gauges]. The first Claude logo is shared by the indicator.
         this._panelBlock = new St.BoxLayout({style_class: 'cu-panel-block'});
         this._panelBlock.visible = true;
+        this._sourceIcon = null;
+        if (this._isCodex) {
+            this._sourceIcon = new St.Icon({
+                gicon: Gio.icon_new_for_string(`${path}/icons/codex-symbolic.svg`),
+                style_class: 'cu-panel-icon',
+                y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._panelBlock.add_child(this._sourceIcon);
+        }
         this._profileDivider = null;
         if (!isFirst) {
             this._profileDivider = new PanelDivider('cu-panel-divider-profile');
@@ -772,6 +777,8 @@ class ProfileView {
         // The UI settings' style, for the gauges, groups and meters made later; the
         // indicator hands over the current one right after construction.
         this._style = DEFAULT_STYLE;
+        if (this._sourceIcon)
+            applyInline(this._sourceIcon, this._style, 'panel-icon');
         this._panelBlock.add_child(this._leadDivider.root);
         this._panelBlock.add_child(this._gaugesBox);
         panelBox.add_child(this._panelBlock);
@@ -783,11 +790,11 @@ class ProfileView {
             style_class: isFirst ? 'cu-profile-section' : 'cu-profile-section cu-profile-section-divider',
         });
 
-        // Each profile carries its own logo and name, so the popup reads as a
-        // list of accounts rather than one branded header over anonymous rows.
+        // Each profile carries its provider logo and name, so the popup reads
+        // as a list of accounts rather than one header over anonymous rows.
         this._header = new St.BoxLayout({style_class: 'cu-profile-header'});
         this._logo = new St.Icon({
-            gicon: Gio.icon_new_for_string(`${path}/icons/octopus.png`),
+            gicon: Gio.icon_new_for_string(`${path}/icons/${this._isCodex ? 'codex-symbolic.svg' : 'claude-spark.svg'}`),
             style_class: 'cu-logo',
             y_align: Clutter.ActorAlign.CENTER,
         });
@@ -827,14 +834,14 @@ class ProfileView {
         const s = this._settings;
         for (const gauge of this._gauges.values())
             gauge.applyVisibility(s);
-        // The chip is built when more than one usage source is configured.
+        // Claude profile tags only earn their width when there are several.
         if (this._chip)
             this._chip.visible = s.get_boolean('show-profile-chip');
 
-        // The lead divider separates tags from gauges and one source from the
-        // next. The shared Claude icon sits in front of the first block.
+        // The lead divider separates each block's identity from its gauges.
         const lead = s.get_string('panel-lead-divider');
-        const leading = !!this._chip?.visible || (this._isFirst && s.get_boolean('show-icon'));
+        const leading = !!this._chip?.visible || !!this._sourceIcon ||
+            (this._isFirst && s.get_boolean('show-icon'));
         this._leadDivider.set(lead, leading);
         if (this._profileDivider) {
             this._profileDivider.set(lead, true);
@@ -849,6 +856,8 @@ class ProfileView {
         applyInline(this._section, style, this._isFirst ? [] : 'profile-section-divider');
         applyInline(this._header, style, 'profile-header');
         applyInline(this._logo, style, 'logo');
+        if (this._sourceIcon)
+            applyInline(this._sourceIcon, style, 'panel-icon');
         applyInline(this._label, style, 'title');
         applyInline(this._subtitle, style, 'subtitle');
         applyInline(this._pill, style, 'pill');
@@ -1330,6 +1339,7 @@ class ProfileView {
         this._groups = [];
         this._gaugesBox?.destroy();
         this._chip?.destroy();
+        this._sourceIcon?.destroy();
         this._leadDivider?.destroy();
         this._profileDivider?.destroy();
         this._panelBlock?.destroy();
@@ -1348,6 +1358,7 @@ class ProfileView {
         this._leadDivider = null;
         this._profileDivider = null;
         this._panelBlock = null;
+        this._sourceIcon = null;
         this._logo = null;
         this._label = null;
         this._subtitle = null;
@@ -1451,19 +1462,19 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
             configDir: defaultCodexHome(),
             provider: 'codex',
         }];
-        const showChip = sources.length > 1;
+        const showClaudeProfileTags = profiles.length > 1;
         // Only the profile the single in-app token can belong to may fall back
         // to it: the sole profile, or the one owning the default ~/.claude dir.
         const defaultDir = Gio.File.new_for_path(defaultConfigDir());
         this._profileViews = sources.map((profile, i) => {
             if (profile.provider === 'codex') {
                 return new ProfileView(profile, this._settings, this._panelBox,
-                    this._sectionsBox, showChip, i === 0, false, this._path);
+                    this._sectionsBox, false, i === 0, false, this._path);
             }
             const ownsDefaultDir = Gio.File.new_for_path(profile.configDir).equal(defaultDir);
             const allowSharedToken = profiles.length === 1 || ownsDefaultDir;
             return new ProfileView(profile, this._settings, this._panelBox,
-                this._sectionsBox, showChip, i === 0, allowSharedToken, this._path);
+                this._sectionsBox, showClaudeProfileTags, i === 0, allowSharedToken, this._path);
         });
         this._applyVisibility();
         this._applyStyle();
@@ -1495,20 +1506,6 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         // One section per profile, rebuilt whenever the profile list changes.
         this._sectionsBox = new St.BoxLayout(VERTICAL_BOX);
         root.add_child(this._sectionsBox);
-
-        // actions
-        this._actions = new St.BoxLayout({style_class: 'cu-actions'});
-        this._usageBtn = new St.Button({label: 'Claude usage page', style_class: 'cu-btn', x_expand: true});
-        this._usageBtn.connectObject(
-            'clicked', () => {
-                this.menu.close();
-                Gio.AppInfo.launch_default_for_uri(USAGE_SETTINGS_URL, null);
-            },
-            // Its hover shade may be set inline (see _styleUsageButton).
-            'notify::hover', () => this._styleUsageButton(),
-            this);
-        this._actions.add_child(this._usageBtn);
-        root.add_child(this._actions);
 
         // footer
         this._footer = new St.BoxLayout({style_class: 'cu-footer'});
@@ -1585,25 +1582,12 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         applyInline(this._panelBox, style, 'panel');
         applyInline(this._panelIcon, style, 'panel-icon');
         applyInline(this._popupRoot, style, 'popup');
-        applyInline(this._actions, style, 'actions');
         applyInline(this._footer, style, 'footer');
         applyInline(this._updated, style, 'updated');
         applyInline(this._settingsBtn, style, 'refresh');
         applyInline(this._refreshBtn, style, 'refresh');
-        this._styleUsageButton();
         for (const view of this._profileViews)
             view.applyStyle(style);
-    }
-
-    // The button's inline style. An inline background beats the stylesheet's
-    // :hover rule, so while a changed background is in place the shade under
-    // the pointer is worked out from it and set here too.
-    _styleUsageButton() {
-        const style = this._uiStyle;
-        let css = style.inline('btn');
-        if (this._usageBtn.hover && style.overridden('btn.background-color'))
-            css += ` background-color: ${formatColor(hoverShade(style.rgba('btn.background-color')))};`;
-        setIfChanged(this._usageBtn, 'style', css);
     }
 
     _renderAllPanels() {
@@ -1691,9 +1675,6 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._settingsBtn?.disconnectObject(this);
         this._settingsBtn?.destroy();
         this._settingsBtn = null;
-        this._usageBtn?.disconnectObject(this);
-        this._usageBtn?.destroy();
-        this._usageBtn = null;
         this._panelIcon?.destroy();
         this._panelIcon = null;
 
@@ -1704,8 +1685,6 @@ class ClaudeUsageIndicator extends PanelMenu.Button {
         this._panelBox = null;
         this._sectionsBox?.destroy();
         this._sectionsBox = null;
-        this._actions?.destroy();
-        this._actions = null;
         this._footer?.destroy();
         this._footer = null;
         this._popupRoot?.destroy();

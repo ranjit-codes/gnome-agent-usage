@@ -91,11 +91,10 @@ const POPUP = 'popup';
 
 // The targets of one value for every popup separator line: the line under a
 // profile's header is that box's bottom border (`header`: the property there),
-// the ones over the next profile, the actions and the footer are top borders
-// (`rest`).
+// the ones over the next profile and the footer are top borders (`rest`).
 const separators = (header, rest) => [
     target('profile-header', header),
-    ...['profile-section-divider', 'actions', 'footer'].map(cls => target(cls, rest)),
+    ...['profile-section-divider', 'footer'].map(cls => target(cls, rest)),
 ];
 
 // Groups are how preferences lays the values out; ids are what is stored.
@@ -166,7 +165,7 @@ export const UI_STYLE_GROUPS = [
         page: TOPBAR,
         props: [
             px('panel-icon.icon-size', 'Icon size', 16, target('panel-icon', 'icon-size'),
-                {subtitle: 'The Claude icon.', min: 8}),
+                {subtitle: 'The Claude and Codex icons.', min: 8}),
         ],
     },
     {
@@ -279,7 +278,7 @@ export const UI_STYLE_GROUPS = [
     {
         title: 'Separator lines',
         page: POPUP,
-        description: 'The lines under a profile\'s header, between profiles, and over the button and the footer.',
+        description: 'The lines under a profile\'s header, between profiles, and over the footer.',
         props: [
             px('separator.width', 'Line width', 1, separators('border-bottom-width', 'border-top-width'), {max: 8}),
             follow('line.color', color('separator.color', 'Line color', null,
@@ -314,21 +313,6 @@ export const UI_STYLE_GROUPS = [
                 target('error', 'color', 'dim'),
             ], {subtitle: 'The same lines, and the note of a signed-out profile.'})),
             color('error.color', 'Error color', '#ff9c8a', target('error', 'color')),
-        ],
-    },
-    {
-        title: 'Button',
-        page: POPUP,
-        description: 'The "Usage page" button.',
-        props: [
-            pt('btn.font-size', 'Font size', 10, target('btn', 'font-size')),
-            weight('btn.font-weight', 'Font weight', 'bold', target('btn', 'font-weight')),
-            color('btn.color', 'Text color', '#ffffff', target('btn', 'color')),
-            color('btn.background-color', 'Background', '#3584e4', target('btn', 'background-color'),
-                {subtitle: 'The shade it takes under the pointer is worked out from this.'}),
-            px('btn.padding-v', 'Padding, top and bottom', 8, target('btn', ['padding-top', 'padding-bottom'])),
-            px('btn.padding-h', 'Padding, left and right', 10, target('btn', ['padding-left', 'padding-right'])),
-            px('btn.border-radius', 'Corner radius', 9, target('btn', 'border-radius'), {max: 99}),
         ],
     },
     {
@@ -503,11 +487,6 @@ export function resetPage(settings, page) {
 // lighter and a little more opaque, like the stylesheet's own :hover rule. An
 // inline background beats that rule, so the extension sets this one itself
 // while a changed background is in place.
-export function hoverShade([r, g, b, a = 1]) {
-    const lift = v => v + (1 - v) * 0.12;
-    return [lift(r), lift(g), lift(b), Math.min(1, a + 0.12)];
-}
-
 // The resolved style for a set of overrides.
 //   value(id)  the effective value (the override, else the default; one whose
 //              default is the panel's own, the percentage's color and font

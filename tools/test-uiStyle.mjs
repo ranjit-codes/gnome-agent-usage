@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
     UI_PAGES, UI_STYLE_GROUPS, UI_STYLE_PROPS, UI_STYLE_KEY, UI_TEXT_SETTINGS, pageGroups, propGroup,
-    parseColor, formatColor, hoverShade, sanitizeValue, cleanOverrides, boldNumbersMarkup,
+    parseColor, formatColor, sanitizeValue, cleanOverrides, boldNumbersMarkup,
     loadOverrides, setOverride, textSettingChanged, changedCount, resetPage, uiStyle,
 } from '../src/lib/uiStyle.js';
 
@@ -273,6 +273,7 @@ test('the tabs: what each holds', () => {
     const rows = page => pageGroups(page).reduce((n, g) => n + g.props.length + (g.settings?.length ?? 0), 0);
     assert.deepEqual(UI_PAGES.map(page => page.title), ['Shared UI', 'Top-Bar UI', 'Popup UI']);
     assert.deepEqual(pageGroups('shared').map(g => g.title), ['Usage colors', 'Common values']);
+    assert.ok(!UI_STYLE_GROUPS.some(g => g.title === 'Button'), 'the removed usage-page button has no style controls');
     // Every group is on one tab, and the shared ones come first in the table.
     assert.equal(UI_PAGES.reduce((n, page) => n + pageGroups(page.id).length, 0), UI_STYLE_GROUPS.length);
     assert.deepEqual(UI_STYLE_GROUPS.slice(0, 2), pageGroups('shared'));
@@ -352,7 +353,7 @@ test('one separator value styles every line in the popup', () => {
     const style = uiStyle({'separator.color': '#ff0000', 'separator.width': 2, 'separator.space-above': 4});
     assert.equal(style.inline('profile-header'),
         'border-bottom-width: 2px; border-bottom-color: #ff0000; padding-bottom: 4px;');
-    for (const cls of ['profile-section-divider', 'actions', 'footer'])
+    for (const cls of ['profile-section-divider', 'footer'])
         assert.equal(style.inline(cls), 'border-top-width: 2px; border-top-color: #ff0000; margin-top: 4px;');
     const text = uiStyle({'secondary.color': '#00ff00', 'secondary.font-size': 10});
     for (const cls of ['subtitle', 'caption', 'updated'])
@@ -361,14 +362,6 @@ test('one separator value styles every line in the popup', () => {
     assert.equal(text.inline('extra', 'warn'), 'font-size: 10pt; color: #00ff00; color: #ffa348;');
     assert.equal(text.inline('error'), 'font-size: 10pt;');
     assert.equal(text.inline('error', 'dim'), 'font-size: 10pt; color: #00ff00;');
-});
-
-test('hoverShade: lighter and more opaque, like the stylesheet\'s :hover', () => {
-    const shade = hoverShade(parseColor('#3584e4'));
-    assert.ok(shade.slice(0, 3).every((v, i) => v > parseColor('#3584e4')[i]));
-    assert.equal(shade[3], 1);
-    assert.equal(formatColor(hoverShade(parseColor('#ffffff'))), '#ffffff');
-    assert.ok(Math.abs(hoverShade([0.5, 0.5, 0.5, 0.18])[3] - 0.30) < 1e-9);
 });
 
 test('the divider color is one value for both kinds of divider', () => {

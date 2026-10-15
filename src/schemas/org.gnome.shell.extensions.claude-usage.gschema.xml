@@ -34,7 +34,7 @@
     <key name="show-profile-chip" type="b">
       <default>true</default>
       <summary>Show the profile tag</summary>
-      <description>Display a short tag before each source's gauge in the panel, to distinguish Claude profiles and Codex when more than one source is shown.</description>
+      <description>Display short tags before Claude profile gauges when more than one Claude profile is configured. Codex is identified by its icon.</description>
     </key>
     <key name="panel-window" type="s">
       <choices>
@@ -60,7 +60,7 @@
     <key name="panel-lead-divider" type="s">
       <default>'|'</default>
       <summary>Lead divider</summary>
-      <description>Text placed between the shared Claude icon or source tag and the gauges, and between sources. Exactly "|" (the default) draws a thin vertical line; blank or whitespace-only shows no divider at all.</description>
+      <description>Text placed between a source logo or profile tag and the gauges, and between sources. Exactly "|" (the default) draws a thin vertical line; blank or whitespace-only shows no divider at all.</description>
     </key>
     <key name="ui-style" type="s">
       <default>'{}'</default>

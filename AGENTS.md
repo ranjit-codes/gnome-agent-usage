@@ -16,8 +16,8 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   shared Claude icon, poll timer, and countdown. The panel shows one block per
   source: `[profile divider] [source tag] [lead divider] gauges…`. Each source
   has one `PanelGauge` (window tag, ring/bar, percentage) for each selected
-  5-hour or 7-day window. Percentage text can show used or remaining capacity;
-  the gauge fill continues to show usage.
+  5-hour or 7-day window. Percentage text and the gauge fill both follow the
+  used-or-remaining display mode; the gauge color still reflects usage severity.
   Its ring and bar sit in a `Clutter.BinLayout` stack, so the one percentage
   label can go on top of the gauge shown instead of after it
   (`_syncPctPlace()`, from the `panel-pct.position` UI value; it reparents
@@ -25,18 +25,19 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   not involved). `panel-pct.sign` drops the "%" (`_syncPctText()`), and over
   the bar the label takes no warn/crit state, since those text colors are
   unreadable on a fill of the same color.
-  The usage percentage, source tag, gauge type, percentage mode, and 5-hour /
-  7-day switches apply to Claude and Codex uniformly. The shared Claude icon
-  is controlled separately. With both windows selected each gauge carries a
-  short tag ("5h", "7d").
+  The usage percentage, gauge type, percentage mode, and 5-hour / 7-day
+  switches apply to Claude and Codex uniformly. Codex has its own icon; Claude
+  profile tags appear only when multiple Claude profiles are configured. The
+  shared Claude icon is controlled separately. With both windows selected
+  each gauge carries a short tag ("5h", "7d").
   - Groups: `groupPanelWindows()` (usageModel.js) puts windows whose resets
     are within 5 minutes (or unknown) in one group, whose `resetsAt` is the
     first known reset. With the exposed panel selectors, each group has one
     window; the divider sits between groups only.
   - Dividers: `PanelDivider` draws both settings. `panel-divider` (window
     divider) goes before every group but the first; `panel-lead-divider`
-    goes between a block's leading elements (source chip, and for
-    the first block the shared Claude icon) and its gauges, and before every
+    goes between a block's leading elements (Codex icon or Claude profile
+    tag, and for the first block the shared Claude icon) and its gauges, and before every
     profile block but the first (`ProfileView.applyVisibility()`). Blank
     shows nothing, exactly `|` draws a 1px line, other text is a label.
   - `renderPanel()` runs after every poll, preference change and timer
@@ -59,10 +60,7 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
     shared `usage.*` values). The popup is covered the same way: `Meter`,
     the popup half of `ProfileView.applyStyle()` (`_setLineState()` keeps the
     extra-usage / error line's state class and inline style together), and
-    the popup shell in `ClaudeUsageIndicator._applyStyle()`. An inline
-  background beats the stylesheet's `:hover`, so while the button's
-  background is changed `_styleUsageButton()` sets a derived hover shade
-  (`hoverShade`) on `notify::hover`.
+    the popup shell in `ClaudeUsageIndicator._applyStyle()`.
 - `src/prefs.js` — Adwaita preferences (panel visibility, percentage mode,
   the two "Panel reflects" window switches, refresh interval, the "Claude
   profiles" list), bound to
@@ -194,8 +192,8 @@ the LICENSE, `build.sh`, `tools/`) is repo tooling that stays out of the bundle.
   once with a grouped selector (the first block, the panel's spacing, the
   popup's secondary text and separator lines); keep it that way, since one
   setting drives all of them. Only classes that extension.js uses.
-- `src/icons/` — panel icon (`claude-spark.svg`), popup logo
-  (`octopus.png`), and legacy recolorable tier icons
+- `src/icons/` — Claude icon (`claude-spark.svg`), Codex icon
+  (`codex-symbolic.svg`), and legacy recolorable tier icons
   (`tier-<name>-symbolic.svg`, one per name in `TIER_ICONS`). `assets/` holds
   repo-only originals that stay out of the bundle (`assets/tier-icons/`).
 - `build.sh` — runs `gnome-extensions pack src` into `dist/`, including `lib`,

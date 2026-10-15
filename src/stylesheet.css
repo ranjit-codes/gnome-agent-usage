@@ -88,9 +88,9 @@
    muted text color, at the top). */
 .cu-subtitle, .cu-caption, .cu-extra, .cu-error, .cu-updated { font-size: 9pt; }
 /* Separator lines: the same line, with the same space above and below it,
-   under a profile's header, between profiles, and over the actions and the
-   footer. Their color is the panel dividers' too. */
-.cu-profile-section-divider, .cu-actions, .cu-footer {
+   under a profile's header, between profiles, and over the footer. Their color
+   is the panel dividers' too. */
+.cu-profile-section-divider, .cu-footer {
     border-top: 1px solid rgba(128, 128, 128, 0.5);
     margin-top: 10px;
     padding-top: 10px;
@@ -138,22 +138,6 @@
     color: #ff9c8a;
     margin: 4px 0;
 }
-
-/* ===== actions ===== */
-.cu-actions {
-    spacing: 8px;
-}
-.cu-btn {
-    padding: 8px 10px;
-    border-radius: 9px;
-    text-align: center;
-    font-weight: bold;
-    font-size: 10pt;
-    background-color: #3584e4;
-    border: 1px solid transparent;
-    color: #ffffff;
-}
-.cu-btn:hover { background-color: #4a90e0; }
 
 /* ===== footer ===== */
 .cu-footer {
